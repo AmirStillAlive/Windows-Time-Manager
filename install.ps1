@@ -7,20 +7,6 @@
 #>
 $installerVersion = "0.1.3"
 
-# ---- Administrator Elevation ----
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {
-    Write-Host "  [*] Requesting Administrator privileges..." -ForegroundColor Yellow
-    # Detect the URL this script was actually invoked from, defaulting to main branch
-    $url = if ($MyInvocation.Line -match "https?://\S+") {
-        $matches[0]
-    } else {
-        "https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.ps1"
-    }
-    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"irm $url | iex`"" -Verb RunAs
-    exit
-}
-
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Clear-Host
 

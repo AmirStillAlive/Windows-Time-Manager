@@ -73,12 +73,12 @@
 * **بدون نیاز به نصب یا دستورات پاورشل؛** فقط کافیست روی `WinTime.exe` دابل‌کلیک کنید تا محیط گرافیکی و مدرن برنامه باز شود.
 * برنامه با دسترسی عادی کاربر (`asInvoker`) باز می‌شود و تنها هنگام اعمال تنظیمات سیستمی، تأییدیه ادمین (UAC) درخواست می‌شود.
 
-### روش دوم: نصب خودکار با یک خط دستور تحت وب
-یک محیط PowerShell باز کنید و دستور زیر را اجرا نمایید:
-```powershell
-irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.ps1 | iex
+### روش دوم: نصب خودکار با اسکریپت بچ (`install.bat`)
+فایل **[`install.bat`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.bat)** را دانلود کرده و با دابل‌کلیک اجرا کنید (یا دستور زیر را در CMD یا PowerShell وارد نمایید):
+```cmd
+curl -sSfL https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.bat -o "%temp%\install.bat" && "%temp%\install.bat"
 ```
-> **نکته:** این روش بدون نیاز به تغییر در `ExecutionPolicy` و به صورت امن در حافظه اجرا می‌شود. اسکریپت فایل‌ها را در مسیر `%LOCALAPPDATA%\WinTime` بارگیری کرده، صحت هش SHA-256 آن‌ها را بر اساس چک‌سام‌های رسمی بررسی می‌کند، میانبر دسکتاپ و منوی استارت را ایجاد کرده و فایل حذف نصب خودکار را قرار می‌دهد.
+> **نکته:** این روش با ابزار سیستمی `curl.exe` فایل‌ها را مستقیماً در مسیر `%LOCALAPPDATA%\WinTime` بارگیری کرده، محدودیت‌های امنیتی فایل‌های دانلودی را رفع کرده و میانبرهای دسکتاپ و استارت منو را می‌سازد. به دلیل ذخیره‌سازی مستقیم فایل‌ها و عدم اجرای کدهای تحت وب در رم (`iex`)، هیچ‌گونه هشدار کاذب آنتی‌ویروس یا ویندوز دیفندر ایجاد نمی‌شود.
 
 ### روش سوم: دانلود دستی اسکریپت و اجرای آفلاین (CLI)
 ۱. هر دو فایل [`WinTime.bat`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.bat) و [`WinTime.ps1`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.ps1) را دانلود کرده (یا از آخرین انتشار در [GitHub Releases](https://github.com/AmirStillAlive/Windows-Time-Manager/releases) دریافت کنید) و کنار یکدیگر در یک پوشه قرار دهید.

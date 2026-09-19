@@ -73,12 +73,12 @@ Download the standalone executable **[`WinTime.exe`](https://github.com/AmirStil
 * **No installation or PowerShell commands required.** Simply double-click `WinTime.exe` to launch the modern graphical interface.
 * Runs without initial UAC elevation (`asInvoker`), requesting elevation only when administrative actions are performed.
 
-### Method 2: One-Liner Web Installer (Automated Setup)
-Open PowerShell and run:
-```powershell
-irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.ps1 | iex
+### Method 2: Automated Batch Installer (`install.bat`)
+Download and run **[`install.bat`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.bat)**, or run the following command in Command Prompt (CMD) or PowerShell:
+```cmd
+curl -sSfL https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.bat -o "%temp%\install.bat" && "%temp%\install.bat"
 ```
-> **Note:** This installation method streams directly into memory and does not depend on local `ExecutionPolicy` restrictions. It downloads components into `%LOCALAPPDATA%\WinTime`, validates SHA-256 integrity fail-closed against official checksums, creates Desktop and Start Menu shortcuts, and provides an uninstaller.
+> **Note:** The batch installer uses Windows' native `curl.exe` to download components into `%LOCALAPPDATA%\WinTime`, clears Mark-of-the-Web flags, creates Desktop and Start Menu shortcuts, and provides an uninstaller. Because it does not stream code directly into memory (`iex`), it avoids heuristic antivirus false positives.
 
 ### Method 3: Offline / Manual Script Download (CLI)
 1. Download both [`WinTime.bat`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.bat) and [`WinTime.ps1`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.ps1) (or download packaged assets from the latest [GitHub Release](https://github.com/AmirStillAlive/Windows-Time-Manager/releases)) and place them in the same folder.

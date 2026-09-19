@@ -104,7 +104,7 @@ jobs:
 
       - name: Generate Checksums (SHA256SUMS.txt)
         run: |
-          $files = @("WinTime.exe", "WinTime.ps1", "WinTime.bat", "install.ps1")
+          $files = @("WinTime.exe", "WinTime.ps1", "WinTime.bat", "install.ps1", "install.bat")
           $lines = @()
           foreach ($f in $files) {
             $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $f).Hash.ToLowerInvariant()
@@ -123,6 +123,7 @@ jobs:
             WinTime.ps1
             WinTime.bat
             install.ps1
+            install.bat
             SHA256SUMS.txt
 
   verify-integrity:
@@ -148,7 +149,7 @@ jobs:
               $checksums[$matches[2].Trim()] = $matches[1].Trim()
             }
           }
-          $files = @("WinTime.exe", "WinTime.ps1", "WinTime.bat", "install.ps1")
+          $files = @("WinTime.exe", "WinTime.ps1", "WinTime.bat", "install.ps1", "install.bat")
           foreach ($f in $files) {
             if (-not (Test-Path $f)) {
               throw "Artifact $f missing from package"
@@ -172,7 +173,7 @@ jobs:
           if ($env:GITHUB_EVENT_NAME -eq 'push') {
             $repo = $env:GITHUB_REPOSITORY
             $sha = $env:GITHUB_SHA
-            $filesToCheck = @("WinTime.ps1", "WinTime.bat", "install.ps1")
+            $filesToCheck = @("WinTime.ps1", "WinTime.bat", "install.ps1", "install.bat")
             foreach ($f in $filesToCheck) {
               $rawUrl = "https://raw.githubusercontent.com/$repo/$sha/$f"
               Write-Host "Verifying raw serving bytes for $f from $rawUrl ..."
@@ -217,4 +218,5 @@ jobs:
             package/WinTime.ps1
             package/WinTime.bat
             package/install.ps1
+            package/install.bat
             package/SHA256SUMS.txt
