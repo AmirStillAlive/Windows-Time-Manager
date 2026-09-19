@@ -10,7 +10,7 @@ Write-Host ""
 $passed = 0
 $failed = 0
 
-function Run-ParityTest([string]$name, [scriptblock]$testBlock) {
+function Invoke-ParityTest([string]$name, [scriptblock]$testBlock) {
     Write-Host ("  [*] " + $name.PadRight(60) + " ") -NoNewline
     try {
         & $testBlock
@@ -30,13 +30,13 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $
 $functionDefs = $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)
 
 foreach ($f in $functionDefs) {
-    if ($f.Name -in @("ConvertTo-NtpTimestamp", "ConvertFrom-NtpTimestamp", "Get-HttpsTimeFromHost", "Test-PeerAddress")) {
+    if ($f.Name -in @("ConvertTo-NtpTimestamp", "ConvertFrom-NtpTimestamp", "ConvertFrom-HttpDateHeader", "Get-HttpsTimeFromHost", "Test-PeerAddress")) {
         Invoke-Expression $f.Extent.Text
     }
 }
 
 # 1. Era 0 NTP Timestamp Test
-Run-ParityTest "NTP Timestamp: Era 0 Round-trip (year 2026)" {
+Invoke-ParityTest "NTP Timestamp: Era 0 Round-trip (year 2026)" {
     $era0Date = [datetime]::SpecifyKind([datetime]"2026-09-19 12:00:00", [System.DateTimeKind]::Utc)
     $parts = ConvertTo-NtpTimestamp $era0Date
     $sec = $parts[0]
@@ -57,7 +57,7 @@ Run-ParityTest "NTP Timestamp: Era 0 Round-trip (year 2026)" {
 }
 
 # 2. Era 1 NTP Timestamp Test (Post-2036 Rollover)
-Run-ParityTest "NTP Timestamp: Era 1 Round-trip (year 2038 rollover)" {
+Invoke-ParityTest "NTP Timestamp: Era 1 Round-trip (year 2038 rollover)" {
     $era1Date = [datetime]::SpecifyKind([datetime]"2038-05-10 08:30:00", [System.DateTimeKind]::Utc)
     $parts = ConvertTo-NtpTimestamp $era1Date
     $sec = $parts[0]
@@ -78,69 +78,48 @@ Run-ParityTest "NTP Timestamp: Era 1 Round-trip (year 2038 rollover)" {
 }
 
 # 3. HTTP Date Parsing: RFC 1123
-Run-ParityTest "HTTP Date: RFC 1123 format parsing" {
-    [string[]]$formats = @(
-        "ddd, dd MMM yyyy HH:mm:ss 'GMT'",
-        "ddd, dd MMM yyyy HH:mm:ss GMT",
-        "dddd, dd-MMM-yy HH:mm:ss 'GMT'",
-        "dddd, dd-MMM-yy HH:mm:ss GMT",
-        "ddd MMM d HH:mm:ss yyyy",
-        "ddd MMM  d HH:mm:ss yyyy",
-        "ddd MMM dd HH:mm:ss yyyy",
-        "r"
-    )
+Invoke-ParityTest "HTTP Date: RFC 1123 format parsing" {
     $rfc1123 = "Sun, 06 Nov 1994 08:49:37 GMT"
-    $parsed = [datetime]::MinValue
-    $ok = [datetime]::TryParseExact($rfc1123.Trim(), $formats, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal, [ref]$parsed)
-    if (-not $ok) { throw "Failed to parse RFC 1123" }
-    $u = $parsed.ToUniversalTime()
+    $u = ConvertFrom-HttpDateHeader $rfc1123
+    if ($null -eq $u) { throw "Failed to parse RFC 1123" }
     if ($u.Year -ne 1994 -or $u.Month -ne 11 -or $u.Day -ne 6 -or $u.Hour -ne 8 -or $u.Minute -ne 49 -or $u.Second -ne 37) {
         throw "Field mismatch: $u"
     }
 }
 
 # 4. HTTP Date Parsing: RFC 850
-Run-ParityTest "HTTP Date: RFC 850 format parsing" {
-    [string[]]$formats = @(
-        "ddd, dd MMM yyyy HH:mm:ss 'GMT'",
-        "ddd, dd MMM yyyy HH:mm:ss GMT",
-        "dddd, dd-MMM-yy HH:mm:ss 'GMT'",
-        "dddd, dd-MMM-yy HH:mm:ss GMT",
-        "ddd MMM d HH:mm:ss yyyy",
-        "ddd MMM  d HH:mm:ss yyyy",
-        "ddd MMM dd HH:mm:ss yyyy",
-        "r"
-    )
+Invoke-ParityTest "HTTP Date: RFC 850 format parsing" {
     $rfc850 = "Sunday, 06-Nov-94 08:49:37 GMT"
-    $parsed = [datetime]::MinValue
-    $ok = [datetime]::TryParseExact($rfc850.Trim(), $formats, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal, [ref]$parsed)
-    if (-not $ok) { throw "Failed to parse RFC 850" }
-    $u = $parsed.ToUniversalTime()
+    $u = ConvertFrom-HttpDateHeader $rfc850
+    if ($null -eq $u) { throw "Failed to parse RFC 850" }
     if ($u.Year -ne 1994 -or $u.Month -ne 11 -or $u.Day -ne 6 -or $u.Hour -ne 8 -or $u.Minute -ne 49 -or $u.Second -ne 37) {
         throw "Field mismatch: $u"
     }
 }
 
 # 5. HTTP Date Parsing: ANSI C asctime()
-Run-ParityTest "HTTP Date: ANSI C asctime format parsing" {
-    [string[]]$formats = @(
-        "ddd, dd MMM yyyy HH:mm:ss 'GMT'",
-        "ddd, dd MMM yyyy HH:mm:ss GMT",
-        "dddd, dd-MMM-yy HH:mm:ss 'GMT'",
-        "dddd, dd-MMM-yy HH:mm:ss GMT",
-        "ddd MMM d HH:mm:ss yyyy",
-        "ddd MMM  d HH:mm:ss yyyy",
-        "ddd MMM dd HH:mm:ss yyyy",
-        "r"
-    )
+Invoke-ParityTest "HTTP Date: ANSI C asctime format parsing" {
     $asctime = "Sun Nov  6 08:49:37 1994"
-    $parsed = [datetime]::MinValue
-    $ok = [datetime]::TryParseExact($asctime.Trim(), $formats, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal, [ref]$parsed)
-    if (-not $ok) { throw "Failed to parse ANSI C asctime" }
-    $u = $parsed.ToUniversalTime()
+    $u = ConvertFrom-HttpDateHeader $asctime
+    if ($null -eq $u) { throw "Failed to parse ANSI C asctime" }
     if ($u.Year -ne 1994 -or $u.Month -ne 11 -or $u.Day -ne 6 -or $u.Hour -ne 8 -or $u.Minute -ne 49 -or $u.Second -ne 37) {
         throw "Field mismatch: $u"
     }
+}
+
+# 6. HTTP Date Parsing: Negative / Garbage Input Handling
+Invoke-ParityTest "HTTP Date: Garbage input returns `$null" {
+    $garbage = "not a valid date string 12345"
+    $u = ConvertFrom-HttpDateHeader $garbage
+    if ($null -ne $u) { throw "Expected `$null for garbage input, got: $u" }
+
+    $empty = ""
+    $uEmpty = ConvertFrom-HttpDateHeader $empty
+    if ($null -ne $uEmpty) { throw "Expected `$null for empty input, got: $uEmpty" }
+
+    $nullInput = $null
+    $uNull = ConvertFrom-HttpDateHeader $nullInput
+    if ($null -ne $uNull) { throw "Expected `$null for null input, got: $uNull" }
 }
 
 Write-Host ""

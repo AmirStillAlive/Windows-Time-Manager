@@ -117,11 +117,16 @@ namespace WindowsTimeManager.Core
                 if (srcResult.Success && !string.IsNullOrEmpty(srcResult.StdOut))
                 {
                     source = srcResult.StdOut.Trim();
-                    lock (_cacheLock)
-                    {
-                        _cachedActiveSource = source;
-                        _cacheTimestamp = DateTime.UtcNow;
-                    }
+                }
+                else
+                {
+                    source = string.Empty; // Failure sentinel to avoid process spamming on error
+                }
+
+                lock (_cacheLock)
+                {
+                    _cachedActiveSource = source;
+                    _cacheTimestamp = DateTime.UtcNow;
                 }
             }
 

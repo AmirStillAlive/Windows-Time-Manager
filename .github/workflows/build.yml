@@ -1,5 +1,9 @@
 name: Build and Release WinTime
 
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   push:
     branches: [ main, dev ]
@@ -15,7 +19,11 @@ jobs:
     name: Compile Native Executable (C#) & Package
     runs-on: windows-latest
     permissions:
-      contents: write
+      contents: read
+
+    env:
+      SIGNING_CERT_BASE64: ${{ secrets.CODE_SIGNING_CERT }}
+      SIGNING_PASS: ${{ secrets.CODE_SIGNING_PASS }}
 
     steps:
       - name: Configure Git CRLF Policy
@@ -30,12 +38,13 @@ jobs:
         run: |
           $expectedVersion = "0.1.3"
           $checks = @(
-            @{ Path = "Program.cs"; Pattern = "0\.1\.3" },
-            @{ Path = "app.manifest"; Pattern = "0\.1\.3\.0" },
-            @{ Path = "WinTime.ps1"; Pattern = "WINTIME v0\.1\.3" },
-            @{ Path = "README.md"; Pattern = "v0\.1\.3" },
-            @{ Path = "README.fa.md"; Pattern = "0\.1\.3" },
-            @{ Path = "CHANGELOG.md"; Pattern = "\[0\.1\.3\]" }
+            @{ Path = "Program.cs"; Pattern = 'AssemblyFileVersion\("0\.1\.3\.0"\)' },
+            @{ Path = "app.manifest"; Pattern = 'assemblyIdentity version="0\.1\.3\.0"' },
+            @{ Path = "WinTime.ps1"; Pattern = 'WINTIME v0\.1\.3' },
+            @{ Path = "install.ps1"; Pattern = 'WinTime v0\.1\.3' },
+            @{ Path = "README.md"; Pattern = 'v0\.1\.3' },
+            @{ Path = "README.fa.md"; Pattern = '0\.1\.3' },
+            @{ Path = "CHANGELOG.md"; Pattern = '\[0\.1\.3\]' }
           )
           foreach ($c in $checks) {
             Write-Host "Checking version in $($c.Path)..."
@@ -72,15 +81,12 @@ jobs:
           $csc = (Get-ChildItem -Path "C:\Windows\Microsoft.NET\Framework*\v4.0.30319\csc.exe" -ErrorAction SilentlyContinue | Select-Object -Last 1).FullName
           if (-not $csc) { throw "Built-in Microsoft C# compiler csc.exe not found" }
           Write-Host "Using compiler: $csc"
-          & $csc /nologo /target:winexe /r:System.Net.Http.dll /optimize+ /platform:anycpu /win32manifest:app.manifest /win32icon:app.ico /out:WinTime.exe Program.cs Core\*.cs
+          & $csc /nologo /target:winexe /r:System.Net.Http.dll /warn:4 /warnaserror /optimize+ /platform:anycpu /win32manifest:app.manifest /win32icon:app.ico /out:WinTime.exe Program.cs Core\*.cs
           if ($LASTEXITCODE -ne 0) { throw "Compilation failed with exit code $LASTEXITCODE" }
           Write-Host "Compiled binary size: $((Get-Item WinTime.exe).Length) bytes"
 
       - name: Digital Code Signing (Optional via GitHub Secrets)
         if: env.SIGNING_CERT_BASE64 != ''
-        env:
-          SIGNING_CERT_BASE64: ${{ secrets.CODE_SIGNING_CERT }}
-          SIGNING_PASS: ${{ secrets.CODE_SIGNING_PASS }}
         run: |
           $signtool = (Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Select-Object -Last 1).FullName
           if (-not $signtool) { throw "signtool.exe not found" }
@@ -113,19 +119,6 @@ jobs:
         with:
           name: WinTime-Package
           path: |
-            WinTime.exe
-            WinTime.ps1
-            WinTime.bat
-            install.ps1
-            SHA256SUMS.txt
-
-      - name: Upload to GitHub Release
-        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          prerelease: true
-          generate_release_notes: true
-          files: |
             WinTime.exe
             WinTime.ps1
             WinTime.bat
@@ -170,3 +163,58 @@ jobs:
             }
             Write-Host "Verified $f ($actual) [OK]"
           }
+
+      - name: Checkout Source for Raw-Serving Byte Verification
+        uses: actions/checkout@v4
+
+      - name: Verify Raw Serving Bytes Against Repository
+        run: |
+          if ($env:GITHUB_EVENT_NAME -eq 'push') {
+            $repo = $env:GITHUB_REPOSITORY
+            $sha = $env:GITHUB_SHA
+            $filesToCheck = @("WinTime.ps1", "WinTime.bat", "install.ps1")
+            foreach ($f in $filesToCheck) {
+              $rawUrl = "https://raw.githubusercontent.com/$repo/$sha/$f"
+              Write-Host "Verifying raw serving bytes for $f from $rawUrl ..."
+              try {
+                $webClient = New-Object System.Net.WebClient
+                $servedBytes = $webClient.DownloadData($rawUrl)
+                $localBytes = [System.IO.File]::ReadAllBytes($f)
+                $servedHash = (Get-FileHash -InputStream ([System.IO.MemoryStream]::new($servedBytes)) -Algorithm SHA256).Hash.ToLowerInvariant()
+                $localHash = (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash.ToLowerInvariant()
+                if ($servedHash -ne $localHash) {
+                  throw "Raw-serving divergence for $f! URL: $rawUrl`nExpected local: $localHash`nActual served:  $servedHash"
+                }
+                Write-Host "  -> $f matches raw serving bytes ($servedHash) [OK]"
+              } catch {
+                Write-Host "  [!] Notice: Could not query raw endpoint: $($_.Exception.Message)" -ForegroundColor Yellow
+              }
+            }
+          }
+
+  publish:
+    name: Publish Release Assets to GitHub Release
+    needs: verify-integrity
+    runs-on: windows-latest
+    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: WinTime-Package
+          path: package/
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          generate_release_notes: true
+          files: |
+            package/WinTime.exe
+            package/WinTime.ps1
+            package/WinTime.bat
+            package/install.ps1
+            package/SHA256SUMS.txt

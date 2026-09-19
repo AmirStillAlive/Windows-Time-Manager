@@ -74,8 +74,35 @@ namespace WindowsTimeManager.Core
 
             try
             {
-                // DNS Resolution
-                IPAddress[] addresses = Dns.GetHostAddresses(host);
+                // DNS Resolution with timeout
+                IPAddress[] addresses = null;
+                IPAddress directIp;
+                if (IPAddress.TryParse(host, out directIp))
+                {
+                    addresses = new IPAddress[] { directIp };
+                }
+                else
+                {
+                    try
+                    {
+                        IAsyncResult ar = Dns.BeginGetHostAddresses(host, null, null);
+                        if (ar.AsyncWaitHandle.WaitOne(timeoutMs))
+                        {
+                            addresses = Dns.EndGetHostAddresses(ar);
+                        }
+                        else
+                        {
+                            result.ErrorMessage = string.Format("DNS resolution timed out after {0}ms.", timeoutMs);
+                            return result;
+                        }
+                    }
+                    catch (Exception dex)
+                    {
+                        result.ErrorMessage = "DNS resolution failed: " + dex.Message;
+                        return result;
+                    }
+                }
+
                 if (addresses == null || addresses.Length == 0)
                 {
                     result.ErrorMessage = "DNS resolution failed: no IP addresses found.";
@@ -183,25 +210,79 @@ namespace WindowsTimeManager.Core
 
             List<NtpQueryResult> allResults = new List<NtpQueryResult>();
             object syncLock = new object();
-            using (CountdownEvent countdown = new CountdownEvent(serverList.Count))
+            int remaining = serverList.Count;
+            ManualResetEventSlim done = new ManualResetEventSlim(false);
+
+            foreach (string srv in serverList)
             {
-                foreach (string srv in serverList)
+                string serverName = srv;
+                ThreadPool.QueueUserWorkItem((state) =>
                 {
-                    string serverName = srv;
-                    ThreadPool.QueueUserWorkItem((state) =>
+                    try
                     {
                         NtpQueryResult r = QueryServer(serverName, timeoutMs);
                         lock (syncLock)
                         {
                             allResults.Add(r);
                         }
-                        countdown.Signal();
-                    });
-                }
-                countdown.Wait(timeoutMs + 1000);
+                    }
+                    catch (Exception ex)
+                    {
+                        lock (syncLock)
+                        {
+                            allResults.Add(new NtpQueryResult
+                            {
+                                Server = serverName,
+                                Success = false,
+                                ErrorMessage = "Worker error: " + ex.Message
+                            });
+                        }
+                    }
+                    finally
+                    {
+                        if (Interlocked.Decrement(ref remaining) == 0)
+                        {
+                            try { done.Set(); } catch (ObjectDisposedException) { }
+                        }
+                    }
+                });
             }
 
-            foreach (NtpQueryResult r in allResults)
+            done.Wait(timeoutMs + 1000);
+
+            // Snapshot the results under the lock before enumerating
+            List<NtpQueryResult> snapshot;
+            lock (syncLock)
+            {
+                snapshot = new List<NtpQueryResult>(allResults);
+            }
+
+            // If all workers completed, dispose the event safely; otherwise do not dispose early to prevent ObjectDisposedException
+            if (Interlocked.CompareExchange(ref remaining, 0, 0) == 0)
+            {
+                try { done.Dispose(); } catch (ObjectDisposedException) { }
+            }
+
+            // Ensure any server that did not finish within the wait window is recorded as failed
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (NtpQueryResult r in snapshot)
+            {
+                if (!string.IsNullOrEmpty(r.Server)) seen.Add(r.Server);
+            }
+            foreach (string srv in serverList)
+            {
+                if (!seen.Contains(srv))
+                {
+                    snapshot.Add(new NtpQueryResult
+                    {
+                        Server = srv,
+                        Success = false,
+                        ErrorMessage = string.Format("Query timed out after {0}ms.", timeoutMs)
+                    });
+                }
+            }
+
+            foreach (NtpQueryResult r in snapshot)
             {
                 if (r.Success)
                     multiResult.SuccessfulResults.Add(r);

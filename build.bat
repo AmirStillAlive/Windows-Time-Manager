@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 title Build WinTime (Native C#)
 echo.
@@ -20,9 +20,9 @@ if not exist "%CSC%" (
 )
 
 echo  [*] Compiling Program.cs with native Windows C# compiler and icon...
-"%CSC%" /nologo /target:winexe /r:System.Net.Http.dll /optimize+ /platform:anycpu /win32manifest:app.manifest /win32icon:app.ico /out:WinTime.exe Program.cs Core\*.cs
+"%CSC%" /nologo /target:winexe /r:System.Net.Http.dll /warn:4 /warnaserror /optimize+ /platform:anycpu /win32manifest:app.manifest /win32icon:app.ico /out:WinTime.exe Program.cs Core\*.cs
 
-if %errorlevel% equ 0 (
+if not errorlevel 1 (
     echo.
     echo  [OK] Successfully compiled WinTime.exe!
     for %%I in (WinTime.exe) do echo  [OK] Binary size: %%~zI bytes
@@ -30,11 +30,13 @@ if %errorlevel% equ 0 (
     :: Optional Code Signing with signtool.exe if certificate.pfx is present
     if exist "%~dp0certificate.pfx" (
         where signtool.exe >nul 2>&1
-        if %errorlevel% equ 0 (
+        if not errorlevel 1 (
             echo  [*] Signing WinTime.exe with code signing certificate...
             signtool.exe sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f "%~dp0certificate.pfx" WinTime.exe >nul 2>&1
-            if %errorlevel% equ 0 (
+            if not errorlevel 1 (
                 echo  [OK] Successfully digitally signed WinTime.exe!
+            ) else (
+                echo  [!] Warning: Code signing failed.
             )
         )
     )

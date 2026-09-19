@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
 if not exist "%~dp0WinTime.ps1" (
@@ -16,13 +16,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Unblock-File -Litera
 
 :: Locate PowerShell executable (standard Windows PowerShell or PowerShell 7+)
 set "PS_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
-if not exist "%PS_EXE%" (
+if not exist "!PS_EXE!" (
     where pwsh.exe >nul 2>&1
-    if %ERRORLEVEL% equ 0 (
+    if not errorlevel 1 (
         set "PS_EXE=pwsh.exe"
     ) else (
         where powershell.exe >nul 2>&1
-        if %ERRORLEVEL% equ 0 (
+        if not errorlevel 1 (
             set "PS_EXE=powershell.exe"
         ) else (
             echo [!] Error: Neither Windows PowerShell nor pwsh.exe could be found.
@@ -32,13 +32,13 @@ if not exist "%PS_EXE%" (
     )
 )
 
-"%PS_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%~dp0WinTime.ps1" %*
-set "EXIT_CODE=%ERRORLEVEL%"
+"!PS_EXE!" -NoProfile -ExecutionPolicy Bypass -File "%~dp0WinTime.ps1" %*
+set "EXIT_CODE=!ERRORLEVEL!"
 
-if %EXIT_CODE% neq 0 (
+if !EXIT_CODE! neq 0 (
     echo.
-    echo [!] WinTime exited with error code: %EXIT_CODE%
+    echo [!] WinTime exited with error code: !EXIT_CODE!
     pause
 )
 
-exit /b %EXIT_CODE%
+exit /b !EXIT_CODE!

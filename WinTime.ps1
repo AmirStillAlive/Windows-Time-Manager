@@ -375,6 +375,32 @@ function Get-NtpTimeFromHost($hostName, $timeoutMs = 2500) {
     }
 }
 
+function ConvertFrom-HttpDateHeader([string]$value) {
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return $null
+    }
+    [string[]]$formats = @(
+        "ddd, dd MMM yyyy HH:mm:ss 'GMT'",
+        "ddd, dd MMM yyyy HH:mm:ss GMT",
+        "dddd, dd-MMM-yy HH:mm:ss 'GMT'",
+        "dddd, dd-MMM-yy HH:mm:ss GMT",
+        "ddd MMM d HH:mm:ss yyyy",
+        "ddd MMM  d HH:mm:ss yyyy",
+        "ddd MMM dd HH:mm:ss yyyy",
+        "r"
+    )
+    $utc = [datetime]::MinValue
+    $trimmed = $value.Trim()
+    $parsed = [datetime]::TryParseExact($trimmed, $formats, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal, [ref]$utc)
+    if (-not $parsed) {
+        $parsed = [datetime]::TryParse($trimmed, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal, [ref]$utc)
+    }
+    if ($parsed) {
+        return $utc.ToUniversalTime()
+    }
+    return $null
+}
+
 function Get-HttpsTimeFromHost($url, $name) {
     # Explicit TLS enforcement: TLS 1.2 and TLS 1.3
     try {
@@ -435,23 +461,9 @@ function Get-HttpsTimeFromHost($url, $name) {
     }
 
     if ($httpDate) {
-        [string[]]$formats = @(
-            "ddd, dd MMM yyyy HH:mm:ss 'GMT'",
-            "ddd, dd MMM yyyy HH:mm:ss GMT",
-            "dddd, dd-MMM-yy HH:mm:ss 'GMT'",
-            "dddd, dd-MMM-yy HH:mm:ss GMT",
-            "ddd MMM d HH:mm:ss yyyy",
-            "ddd MMM  d HH:mm:ss yyyy",
-            "ddd MMM dd HH:mm:ss yyyy",
-            "r"
-        )
-        $utc = [datetime]::MinValue
-        $parsed = [datetime]::TryParseExact($httpDate.Trim(), $formats, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal, [ref]$utc)
-        if (-not $parsed) {
-            $parsed = [datetime]::TryParse($httpDate.Trim(), [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal, [ref]$utc)
-        }
-        if ($parsed) {
-            return @{ Success = $true; Host = $name; UtcTime = $utc.ToUniversalTime(); LatencyMs = $latencyMs }
+        $parsedUtc = ConvertFrom-HttpDateHeader $httpDate
+        if ($parsedUtc) {
+            return @{ Success = $true; Host = $name; UtcTime = $parsedUtc; LatencyMs = $latencyMs }
         } else {
             return @{ Success = $false; Host = $name; Error = "Failed to parse HTTP Date format: $httpDate" }
         }

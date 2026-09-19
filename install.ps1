@@ -1,20 +1,21 @@
 <#
 .SYNOPSIS
-    WinTime - One-Liner Web Installer & Runner
+    WinTime v0.1.3 - One-Liner Web Installer & Runner
 .DESCRIPTION
     Run directly in PowerShell without manual downloading:
-    irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/dev/install.ps1 | iex
+    irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.ps1 | iex
 #>
+$installerVersion = "0.1.3"
 
 # ---- Administrator Elevation ----
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
     Write-Host "  [*] Requesting Administrator privileges..." -ForegroundColor Yellow
-    # Detect the URL this script was actually invoked from, defaulting to dev until main is updated
+    # Detect the URL this script was actually invoked from, defaulting to main branch
     $url = if ($MyInvocation.Line -match "https?://\S+") {
         $matches[0]
     } else {
-        "https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/dev/install.ps1"
+        "https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.ps1"
     }
     Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"irm $url | iex`"" -Verb RunAs
     exit
@@ -63,7 +64,7 @@ function Test-FileIntegrity {
         [string]$SourceUrl
     )
     if (-not (Test-Path -LiteralPath $FilePath)) { return $false }
-    if ($Checksums.ContainsKey($FileName)) {
+    if ($Checksums -and $Checksums.ContainsKey($FileName)) {
         $expected = $Checksums[$FileName].Trim().ToLowerInvariant()
         $actual = (Get-FileHash -LiteralPath $FilePath -Algorithm SHA256).Hash.Trim().ToLowerInvariant()
         if ($actual -ne $expected) {
@@ -82,8 +83,9 @@ function Test-FileIntegrity {
         Write-Host "OK (SHA-256 verified)" -ForegroundColor Green
         return $true
     } else {
-        Write-Host "OK (No entry in SHA256SUMS.txt)" -ForegroundColor Yellow
-        return $true
+        Write-Host "FAILED (Missing checksum in SHA256SUMS.txt)" -ForegroundColor Red
+        Remove-Item -LiteralPath $FilePath -Force -ErrorAction SilentlyContinue
+        return $false
     }
 }
 
@@ -136,16 +138,25 @@ if ($releaseTag) {
     }
 }
 
-# 2. Add branch refs in priority order
-$candidateSources += @{
-    Name = "GitHub Raw dev branch"
-    Base = "https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/dev"
-    Probe = "https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/dev/SHA256SUMS.txt"
+# 2. Add fallback release tag if API was unreachable
+if (-not $releaseTag) {
+    $candidateSources += @{
+        Name = "GitHub Release Assets (v0.1.3)"
+        Base = "https://github.com/AmirStillAlive/Windows-Time-Manager/releases/download/v0.1.3"
+        Probe = "https://github.com/AmirStillAlive/Windows-Time-Manager/releases/download/v0.1.3/SHA256SUMS.txt"
+    }
 }
+
+# 3. Add branch refs
 $candidateSources += @{
     Name = "GitHub Raw main branch"
     Base = "https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main"
     Probe = "https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/SHA256SUMS.txt"
+}
+$candidateSources += @{
+    Name = "GitHub Raw dev branch"
+    Base = "https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/dev"
+    Probe = "https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/dev/SHA256SUMS.txt"
 }
 
 # Attempt installation from candidates in sequence
@@ -179,6 +190,11 @@ foreach ($src in $candidateSources) {
         Write-Host "  [!] Warning: Failed to retrieve SHA256SUMS.txt from $sourceBase" -ForegroundColor Yellow
     }
 
+    if ($checksums.Count -eq 0) {
+        Write-Host "  [X] Checksum file missing or empty from $sourceBase. Source rejected (fail-closed)." -ForegroundColor Red
+        continue
+    }
+
     # Step B: Download WinTime.exe (optional GUI binary)
     $exePath = "$installDir\WinTime.exe"
     Write-Host "      Downloading WinTime.exe ... " -NoNewline -ForegroundColor Gray
@@ -188,12 +204,8 @@ foreach ($src in $candidateSources) {
         if ((Test-Path -LiteralPath $exePath) -and (Get-Item -LiteralPath $exePath).Length -gt 10000) {
             $exeDownloaded = $true
             Write-Host "Downloaded ($((Get-Item -LiteralPath $exePath).Length) bytes), verifying ... " -NoNewline -ForegroundColor Gray
-            if ($checksums.Count -gt 0) {
-                if (-not (Test-FileIntegrity -FilePath $exePath -FileName "WinTime.exe" -Checksums $checksums -SourceUrl "$sourceBase/WinTime.exe")) {
-                    $exeDownloaded = $false
-                }
-            } else {
-                Write-Host "OK (Unverified)" -ForegroundColor Yellow
+            if (-not (Test-FileIntegrity -FilePath $exePath -FileName "WinTime.exe" -Checksums $checksums -SourceUrl "$sourceBase/WinTime.exe")) {
+                $exeDownloaded = $false
             }
             if ($exeDownloaded) {
                 Unblock-File -LiteralPath $exePath -ErrorAction SilentlyContinue
@@ -218,12 +230,8 @@ foreach ($src in $candidateSources) {
         Invoke-WebRequest -Uri "$sourceBase/WinTime.ps1" -OutFile $ps1Path -UseBasicParsing -TimeoutSec 20 -ErrorAction Stop
         if ((Test-Path -LiteralPath $ps1Path) -and (Get-Item -LiteralPath $ps1Path).Length -gt 1000) {
             $ps1Downloaded = $true
-            if ($checksums.Count -gt 0) {
-                if (-not (Test-FileIntegrity -FilePath $ps1Path -FileName "WinTime.ps1" -Checksums $checksums -SourceUrl "$sourceBase/WinTime.ps1")) {
-                    $ps1Downloaded = $false
-                }
-            } else {
-                Write-Host "OK ($((Get-Item -LiteralPath $ps1Path).Length) bytes)" -ForegroundColor Green
+            if (-not (Test-FileIntegrity -FilePath $ps1Path -FileName "WinTime.ps1" -Checksums $checksums -SourceUrl "$sourceBase/WinTime.ps1")) {
+                $ps1Downloaded = $false
             }
             if ($ps1Downloaded) {
                 Unblock-File -LiteralPath $ps1Path -ErrorAction SilentlyContinue
@@ -242,12 +250,8 @@ foreach ($src in $candidateSources) {
         Invoke-WebRequest -Uri "$sourceBase/WinTime.bat" -OutFile $batPath -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
         if ((Test-Path -LiteralPath $batPath) -and (Get-Item -LiteralPath $batPath).Length -gt 50) {
             $batDownloaded = $true
-            if ($checksums.Count -gt 0) {
-                if (-not (Test-FileIntegrity -FilePath $batPath -FileName "WinTime.bat" -Checksums $checksums -SourceUrl "$sourceBase/WinTime.bat")) {
-                    $batDownloaded = $false
-                }
-            } else {
-                Write-Host "OK ($((Get-Item -LiteralPath $batPath).Length) bytes)" -ForegroundColor Green
+            if (-not (Test-FileIntegrity -FilePath $batPath -FileName "WinTime.bat" -Checksums $checksums -SourceUrl "$sourceBase/WinTime.bat")) {
+                $batDownloaded = $false
             }
             if ($batDownloaded) {
                 Unblock-File -LiteralPath $batPath -ErrorAction SilentlyContinue

@@ -37,6 +37,7 @@ namespace WindowsTimeManager.Tests
             RunTest("HTTPS Time: RFC 1123, RFC 850, and ANSI C Date Parsing", TestHttpsTimeClient_ParseHttpDate);
             RunTest("Process Runner: Process Timeout and Clean Process Kill", TestProcessRunner_TimeoutAndKill);
             RunTest("Time Service: Domain Policy Blocking and Override Flag", TestTimeServiceManager_DomainPolicyAndOverride);
+            RunTest("NTP Client: Query Multiple Unresolvable Sources Completes Promptly", TestNtpClient_QueryMultipleSources_UnresolvableHosts);
 
             Console.WriteLine();
             Console.WriteLine("==============================================================");
@@ -300,6 +301,7 @@ namespace WindowsTimeManager.Tests
         private static void TestProcessRunner_TimeoutAndKill()
         {
             // Ping 127.0.0.1 10 times takes ~9-10 seconds. Timeout is set to 400ms.
+            int pingsBefore = System.Diagnostics.Process.GetProcessesByName("PING").Length;
             DateTime start = DateTime.UtcNow;
             ProcessResult res = ProcessRunner.Execute("cmd.exe", "/c ping 127.0.0.1 -n 10", timeoutMs: 400);
             TimeSpan elapsed = DateTime.UtcNow - start;
@@ -308,6 +310,28 @@ namespace WindowsTimeManager.Tests
             Assert(!res.Success, "Timed-out process must report Success = false");
             Assert(res.ErrorMessage != null && res.ErrorMessage.Contains("timed out"), "Error message must report timeout");
             Assert(elapsed.TotalSeconds < 5.0, "Process must be terminated promptly and not hang");
+
+            System.Threading.Thread.Sleep(300);
+            int pingsAfter = System.Diagnostics.Process.GetProcessesByName("PING").Length;
+            Assert(pingsAfter <= pingsBefore, "No orphaned ping child processes should remain after timeout termination");
+        }
+
+        private static void TestNtpClient_QueryMultipleSources_UnresolvableHosts()
+        {
+            string[] invalidHosts = new string[] {
+                "invalid.unresolvable.hostname.test.local.1",
+                "invalid.unresolvable.hostname.test.local.2",
+                "invalid.unresolvable.hostname.test.local.3"
+            };
+
+            DateTime start = DateTime.UtcNow;
+            MultiNtpQueryResult res = NtpClient.QueryMultipleSources(invalidHosts, timeoutMs: 600);
+            TimeSpan elapsed = DateTime.UtcNow - start;
+
+            Assert(!res.Success, "QueryMultipleSources with unresolvable hosts must not succeed");
+            Assert(res.SuccessfulResults.Count == 0, "No successful results expected for invalid hosts");
+            Assert(res.FailedResults.Count == invalidHosts.Length, "All invalid hosts must be present in FailedResults");
+            Assert(elapsed.TotalSeconds < 8.0, "Resolution and query must complete promptly within timeout bounds");
         }
 
         #endregion

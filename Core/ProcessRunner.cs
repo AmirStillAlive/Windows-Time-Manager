@@ -76,7 +76,27 @@ namespace WindowsTimeManager.Core
 
                     if (!p.WaitForExit(timeoutMs))
                     {
+                        sw.Stop();
+                        result.ExecutionTimeMs = sw.ElapsedMilliseconds;
                         result.TimedOut = true;
+
+                        try
+                        {
+                            // Kill process tree to avoid orphaned child processes
+                            using (Process killer = Process.Start(new ProcessStartInfo
+                            {
+                                FileName = "taskkill.exe",
+                                Arguments = string.Format("/T /F /PID {0}", p.Id),
+                                CreateNoWindow = true,
+                                UseShellExecute = false,
+                                WindowStyle = ProcessWindowStyle.Hidden
+                            }))
+                            {
+                                if (killer != null) killer.WaitForExit(2000);
+                            }
+                        }
+                        catch { }
+
                         try { p.Kill(); } catch { }
                         try { p.WaitForExit(1000); } catch { }
                         result.ErrorMessage = string.Format("Process timed out after {0} ms: {1} {2}", timeoutMs, fileName, arguments);

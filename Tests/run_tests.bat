@@ -13,7 +13,7 @@ if not exist "%CSC%" (
 )
 
 echo [*] Compiling WinTime Test Suite...
-"%CSC%" /nologo /target:exe /r:System.Net.Http.dll /optimize+ /platform:anycpu /out:Tests\UnitTests.exe Tests\UnitTests.cs Core\*.cs
+"%CSC%" /nologo /target:exe /r:System.Net.Http.dll /warn:4 /warnaserror /optimize+ /platform:anycpu /out:Tests\UnitTests.exe Tests\UnitTests.cs Core\*.cs
 
 if %errorlevel% neq 0 (
     echo [!] Failed to compile UnitTests.exe!

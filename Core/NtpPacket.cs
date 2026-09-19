@@ -13,6 +13,7 @@ namespace WindowsTimeManager.Core
     {
         public const int PacketSize = 48;
         public static readonly DateTime NtpEpoch = new DateTime(1900, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        public static readonly DateTime MinPlausibleServerTime = NtpEpoch.AddYears(120); // 2020-01-01 00:00:00 UTC
 
         public byte LeapIndicator { get; set; }
         public byte VersionNumber { get; set; }
@@ -144,17 +145,17 @@ namespace WindowsTimeManager.Core
             p.ReceiveTimestamp = ReadTimestamp(buffer, 32);
             p.TransmitTimestamp = ReadTimestamp(buffer, 40);
 
-            // Protocol Check: Transmit timestamp cannot be zero
-            if (p.TransmitTimestamp == DateTime.MinValue || p.TransmitTimestamp <= NtpEpoch.AddYears(120))
+            // Protocol Check: Transmit timestamp cannot be zero or implausible
+            if (p.TransmitTimestamp == DateTime.MinValue || p.TransmitTimestamp <= MinPlausibleServerTime)
             {
-                validationError = "Server transmit timestamp is invalid or zero (unsynchronized server response)";
+                validationError = string.Format("Server transmit timestamp is invalid or before {0:yyyy-MM-dd} (unsynchronized server response)", MinPlausibleServerTime);
                 return false;
             }
 
             // Protocol Check: Receive timestamp cannot be zero in standard unicast mode
-            if (p.ReceiveTimestamp == DateTime.MinValue || p.ReceiveTimestamp <= NtpEpoch.AddYears(120))
+            if (p.ReceiveTimestamp == DateTime.MinValue || p.ReceiveTimestamp <= MinPlausibleServerTime)
             {
-                validationError = "Server receive timestamp is invalid or zero";
+                validationError = string.Format("Server receive timestamp is invalid or before {0:yyyy-MM-dd}", MinPlausibleServerTime);
                 return false;
             }
 
@@ -271,10 +272,11 @@ namespace WindowsTimeManager.Core
             // Apply standard era-inference heuristic: if intPart < 0x80000000, infer Era 1 (add 2^32 seconds)
             ulong secondsWithEra = (intPart < 0x80000000UL) ? (intPart + 4294967296UL) : intPart;
 
-            double milliseconds = (secondsWithEra * 1000.0) + ((fractPart * 1000.0) / 4294967296.0);
             try
             {
-                return NtpEpoch.AddMilliseconds(milliseconds);
+                long ticks = (long)(secondsWithEra * (ulong)TimeSpan.TicksPerSecond) +
+                             (long)((fractPart * (double)TimeSpan.TicksPerSecond) / 4294967296.0);
+                return NtpEpoch.AddTicks(ticks);
             }
             catch
             {

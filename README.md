@@ -37,7 +37,7 @@ What started as a tiny quick-fix script for that game issue gradually grew: Wind
 
 ### 1. 🔄 Multi-Source System Clock Synchronization
 * **Windows Time Service (`w32tm`):** Tries native resynchronization using configured system peers.
-* **Direct SNTP Consensus (RFC 4330 / 5905):** If Windows Time fails, WinTime queries multiple public NTP servers (`time.cloudflare.com`, `time.google.com`, `pool.ntp.org`, `time.windows.com`), computes round-trip delay and offset using standard 4-timestamp math, filters outliers, and applies the median offset.
+* **Direct SNTP Consensus (RFC 4330 / 5905):** If Windows Time fails, WinTime queries multiple public NTP servers (`time.cloudflare.com`, `time.google.com`, `pool.ntp.org`, `time.windows.com`, `time.aws.com`), computes round-trip delay and offset using standard 4-timestamp math, filters outliers, and applies the median offset.
 * **HTTPS Date Header Fallback:** When UDP port 123 is completely blocked by restrictive networks, WinTime falls back to secure HTTP Date headers (port 443) with clock-skew detection.
 
 ### 2. ⚙️ NTP Peer Management
@@ -46,7 +46,7 @@ What started as a tiny quick-fix script for that game issue gradually grew: Wind
 * **Domain Protection:** Detects Active Directory domain membership to avoid disrupting enterprise Kerberos time hierarchies without explicit administrative approval.
 * **Ready Presets:**
   * **⭐ Iran-Optimized:** Includes reliable local and international servers.
-  * **🌐 Global Tier-1:** Cloudflare, Google, and NTP Pool.
+  * **🌐 Global Tier-1:** Cloudflare, Google, NTP Pool, and AWS.
   * **🪟 Windows Default:** Restores the default `time.windows.com`.
 
 ### 3. 📅 Custom Time Adjustments
@@ -71,13 +71,19 @@ Choose any of the three installation or launch methods below:
 ### Method 1: One-Liner Web Installer (Recommended)
 Open PowerShell and run:
 ```powershell
-irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/dev/install.ps1 | iex
+irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.ps1 | iex
 ```
-> **Note:** This installation method streams directly into memory and does not touch or depend on local `ExecutionPolicy` restrictions. It downloads all components into `%LOCALAPPDATA%\WinTime`, validates SHA-256 integrity, creates Desktop and Start Menu shortcuts, and provides an automatic uninstaller.
+> **Note:** This installation method streams directly into memory and does not depend on local `ExecutionPolicy` restrictions. It downloads components into `%LOCALAPPDATA%\WinTime`, validates SHA-256 integrity fail-closed against official checksums, creates Desktop and Start Menu shortcuts, and provides an uninstaller.
+> 
+> For testing the development branch:
+> ```powershell
+> irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/dev/install.ps1 | iex
+> ```
 
 ### Method 2: Offline / Manual Folder Download
-1. Download both [`WinTime.bat`](WinTime.bat) and [`WinTime.ps1`](WinTime.ps1) and place them in the same folder.
+1. Download both [`WinTime.bat`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.bat) and [`WinTime.ps1`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.ps1) (or download packaged assets from the latest [GitHub Release](https://github.com/AmirStillAlive/Windows-Time-Manager/releases)) and place them in the same folder.
 2. **Double-click `WinTime.bat`**. The batch launcher automatically bypasses restrictive execution policies, clears Mark-of-the-Web metadata, and starts the CLI.
+> **Note:** Web browsers mark downloaded files with Mark-of-the-Web (MOTW). Use `WinTime.bat` to launch or unblock the script before direct PowerShell execution.
 
 ### Method 3: Advanced Command-Line Launch
 If running PowerShell directly from the terminal:
@@ -89,12 +95,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\path\to\WinTime.ps1"
 
 ## 🔍 Verifying Downloads
 
-WinTime releases publish cryptographic SHA-256 checksums in `SHA256SUMS.txt`. You can independently verify file integrity using PowerShell:
+WinTime publishes cryptographic SHA-256 checksums in `SHA256SUMS.txt` attached to every [GitHub Release](https://github.com/AmirStillAlive/Windows-Time-Manager/releases). Published checksums cover release assets (packaged `.exe`, `.ps1`, `.bat`), not dynamic raw git branch blobs.
+
+You can independently verify file integrity using PowerShell:
 
 ```powershell
 Get-FileHash .\WinTime.exe, .\WinTime.ps1, .\WinTime.bat -Algorithm SHA256 | Format-Table -AutoSize
 ```
-Compare the output hashes with the published entries in [`SHA256SUMS.txt`](SHA256SUMS.txt).
+Compare the output hashes with the published entries in `SHA256SUMS.txt` from the corresponding GitHub Release.
 
 ---
 
@@ -149,25 +157,27 @@ If you downloaded WinTime inside a `.zip` archive, Windows applies MOTW to every
 ## 📁 Repository Structure
 
 ```text
+├── assets/                     # Project visual assets & branding
+│   └── logo.png                # WinTime logo
 ├── WinTime.bat                 # Easy double-click batch launcher for CLI
 ├── WinTime.ps1                 # Standalone PowerShell CLI engine
 ├── Program.cs                  # Windows Forms UI application (C#)
 ├── Core/                       # Core engine modules
 │   ├── NtpPacket.cs            # RFC 4330 / 5905 SNTP packet handling & math
 │   ├── NtpClient.cs            # Multi-source NTP consensus & outlier filtering
-│   ├── ProcessRunner.cs        # Process runner with exit-code validation
+│   ├── ProcessRunner.cs        # Process runner with exit-code validation & process-tree cleanup
 │   ├── PeerValidator.cs        # IPv4/IPv6/FQDN validation
 │   ├── NativeMethods.cs        # Win32 privilege & system time APIs
 │   ├── HttpsTimeClient.cs      # Fallback HTTPS Date header client
 │   └── TimeServiceManager.cs   # Windows Time service configuration
 ├── Tests/                      # Automated unit test suite
 │   ├── UnitTests.cs            # Protocol correctness & validation tests
+│   ├── test_parity.ps1         # PowerShell CLI behavioural parity test suite
 │   └── run_tests.bat           # Test runner
 ├── app.manifest                # Invoker execution level & DPI awareness manifest
 ├── app.ico                     # Application icon
-├── build.bat                   # Local build script (uses csc.exe)
+├── build.bat                   # Local build script (uses in-box csc.exe)
 ├── install.ps1                 # One-liner web installer with hash & signature checks
-├── SHA256SUMS.txt              # Cryptographic SHA-256 release checksums
 ├── .gitattributes              # Deterministic line-ending specifications
 ├── SECURITY.md                 # Security policy & threat disclosures
 ├── CHANGELOG.md                # Version release notes & changelog
@@ -177,7 +187,15 @@ If you downloaded WinTime inside a `.zip` archive, Windows applies MOTW to every
 └── LICENSE                     # MIT License
 ```
 
-*(Note: Pre-compiled binaries like `WinTime.exe` are published under [Releases](https://github.com/AmirStillAlive/Windows-Time-Manager/releases) rather than tracked in git.)*
+*(Note: Pre-compiled binaries like `WinTime.exe` and `SHA256SUMS.txt` are published under [Releases](https://github.com/AmirStillAlive/Windows-Time-Manager/releases) rather than tracked directly in git.)*
+
+---
+
+## ⚠️ Known Limitations
+
+1. **HTTPS Date Header Granularity:** The fallback HTTPS synchronization path relies on standard HTTP `Date` response headers, which provide ~1-second coarse granularity rather than sub-millisecond NTP precision.
+2. **Active Directory Domain Membership:** On domain-joined machines, Windows Time synchronization is managed by Active Directory Domain Controllers via Kerberos policies. Manual NTP peer overrides are blocked by default to prevent breaking domain authentication.
+3. **Execution Policy & Group Policy (GPO):** While `-ExecutionPolicy Bypass` resolves default and per-user execution restrictions, enterprise Group Policies (`MachinePolicy` / `UserPolicy` enforced by domain administrators) override process-level bypass flags.
 
 ---
 
@@ -193,6 +211,11 @@ build.bat
 To run the automated unit test suite:
 ```cmd
 Tests\run_tests.bat
+```
+
+To run the PowerShell parity test suite:
+```powershell
+powershell -ExecutionPolicy Bypass -File Tests\test_parity.ps1
 ```
 
 ---
