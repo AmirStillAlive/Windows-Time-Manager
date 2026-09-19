@@ -22,75 +22,87 @@
 
 ## Why WinTime?
 
-* **🚀 Tiny executable (~200 KB):** A compact Windows utility with no bundled third-party runtime, interpreter, or large framework package.
+* **🚀 Compact standalone executable (~155 KB):** Compiled directly with native Windows components without bundling third-party runtimes, Electron, or large framework dependencies.
 
-* **⚡ Fast startup:** Designed for quick launch and minimal overhead.
+* **⚡ Fast startup & minimal footprint:** Instant launch with negligible RAM and CPU overhead.
 
-* **✨ Modern Windows UI:** A clean dark interface with custom vector icons and DPI-aware layout for different Windows display scaling settings.
+* **🎯 RFC 4330 / 5905 Protocol Compliance:** Implements complete 4-timestamp SNTP calculations, network delay calculation, origin nonce verification, and Stratum validation.
 
-* **🎯 Live feedback:** Every operation provides immediate status feedback such as `Loading`, `Success`, or `Error`.
+* **🌐 Multi-Source NTP Consensus:** Queries multiple independent time sources concurrently, eliminates outliers, and selects the median offset for reliable synchronization.
 
-* **🔍 Open Source & Transparent:** The complete source code is available in this repository for inspection and building.
+* **✨ Modern Windows UI:** A clean dark interface with custom vector icons and DPI-aware layout for multi-monitor display scaling.
+
+* **🛡️ Safe Service & Peer Management:** Strict semantic validation for IPv4, IPv6, and FQDN peer entries; domain join detection; and elimination of false-success process reporting.
 
 ---
 
 ## Features
 
-### 1. 🎮 One-Click Game Time Presets
+### 1. 🎮 Game Time Presets (RDR2 Workaround)
 
-* Sets the system clock to the predefined `2019-10-15 21:31:00` timestamp used by the RDR2 preset.
+* Sets the system clock to the predefined `2019-10-15 21:31:00` timestamp used by the RDR2 launch workaround.
+* Requests explicit user confirmation before applying large clock adjustments (> 24h) to prevent unexpected TLS certificate disruptions.
+* Uses Windows `SeSystemtimePrivilege` elevation with sub-second millisecond precision via `SetSystemTime`.
 
-* Uses the Windows `SeSystemtimePrivilege` required for changing the system clock.
+### 2. 🔄 High-Precision System Time Synchronization
 
-### 2. 🔄 System Time Synchronization
+* **Windows Time Service (`w32tm`):** Resynchronizes the system using registered Windows Time peers with `w32tm /resync /force`.
+* **Direct SNTP Multi-Source Consensus:** If the Windows Time service resync fails (e.g. ISP packet inspection or domain policies), WinTime queries multiple Stratum 1/2 servers (`time.cloudflare.com`, `time.google.com`, `pool.ntp.org`, `time.windows.com`), computes round-trip delay and offset using standard 4-timestamp math, and applies the median offset.
+* **HTTPS Date Header Fallback:** When UDP port 123 is completely blocked by restrictive firewalls or ISPs, WinTime falls back to retrieving atomic HTTP Date headers over port 443 with built-in TLS clock skew diagnostics.
 
-* **Windows Time (`w32tm`):** Resynchronizes the system using the currently configured Windows Time peers with `w32tm /resync /force`.
-
-* **Public NTP services:** Supports time synchronization and connectivity testing against services such as `time.cloudflare.com`, `time.google.com`, `pool.ntp.org`, and `time.windows.com`.
-
-* **HTTPS fallback:** When UDP port 123 is unavailable, the application can use an HTTPS-based time source, depending on the configured provider.
-
-### 3. ⚙️ NTP Peer Management
+### 3. ⚙️ Semantic NTP Peer Management
 
 **Add custom NTP server:**
 
-* DNS resolution check before adding a peer.
-* UDP port 123 connectivity test.
-* Basic hostname validation.
-* Configures the Windows Time service using the appropriate NTP client configuration.
+* Strict semantic validation for IPv4, IPv6, and FQDN addresses (rejects loopback, multicast, broadcast, and invalid DNS labels).
+* Pre-flight DNS resolution and live UDP 123 latency and Stratum probe before saving to registry.
+* Domain controller safety: does not set `/reliable:yes` on client workstations to prevent domain-wide time pollution.
 
 **Remove peers:**
 
-* Remove individual configured peers.
-* Safety checks help prevent accidentally removing the last usable time source.
+* Remove individual configured peers with registry validation.
+* Safety checks prevent accidentally removing the last configured time source.
 
 **One-click presets:**
 
-* **⭐ Iran-Optimized:** A combination of public international and regional NTP servers.
-* **🌐 Global:** Cloudflare, Google, and NTP Pool.
-* **🪟 Windows Default:** Restores `time.windows.com`.
+* **⭐ Iran-Optimized:** Balanced combination of public international and local `.ir` NTP servers.
+* **🌐 Global Tier-1:** Cloudflare, Google, and NTP Pool.
+* **🪟 Windows Default:** Restores standard `time.windows.com`.
 
 ### 4. 📅 Custom System Time
 
-* Set a custom year, month, day, hour, and minute.
-* Quickly return to the current system time.
+* Set a custom year, month, day, hour, and minute with sub-second accuracy.
+* Confirmation prompt for changes greater than 24 hours to prevent breaking active SSL/TLS web sessions.
+* Quick one-click reset to current system time.
 
 ### 5. ⚡ GUI + CLI
 
-* **GUI (`WinTime.exe`):** A lightweight Windows desktop interface.
-* **CLI (`WinTime.ps1`):** A PowerShell-based command-line engine with peer management and Windows Time service repair functionality, including peer backup and restore.
+* **GUI (`WinTime.exe`):** Lightweight Windows Forms desktop interface with live status feedback.
+* **CLI (`WinTime.ps1`):** Standalone PowerShell engine featuring identical RFC 4330 SNTP 4-timestamp math, multi-source consensus, peer management, and Windows Time service repair.
 
 ---
 
 ## 📁 Repository Structure
 
 ```text
-├── WinTime.exe                 # Main executable (~60 KB)
+├── WinTime.exe                 # Main executable (~155 KB)
 ├── WinTime.ps1                 # PowerShell CLI and management engine
-├── Program.cs                  # Complete C# source code
-├── app.manifest                # UAC and DPI configuration
-├── build.bat                   # Local build script
-├── .github/workflows/build.yml # GitHub Actions build workflow
+├── Program.cs                  # Windows Forms UI and Application logic
+├── Core/                       # Production core modules
+│   ├── NtpPacket.cs            # RFC 4330 / 5905 SNTP packet serialization & 4-timestamp math
+│   ├── NtpClient.cs            # Multi-source consensus & outlier filtering
+│   ├── ProcessRunner.cs        # Safe subprocess runner with strict exit code checking
+│   ├── PeerValidator.cs        # Semantic IPv4/IPv6/FQDN validation & sanitization
+│   ├── NativeMethods.cs        # Win32 token privilege management & sub-second clock API
+│   ├── HttpsTimeClient.cs      # Fallback HTTP Date header parser with TLS skew diagnosis
+│   └── TimeServiceManager.cs   # Windows Time service configuration & domain detection
+├── Tests/                      # Automated unit test suite
+│   ├── UnitTests.cs            # Protocol correctness & security regression tests
+│   └── run_tests.bat           # Command-line test runner
+├── app.manifest                # UAC elevation and Per-Monitor DPI V2 configuration
+├── build.bat                   # Native compilation script
+├── install.ps1                 # Verified one-click installer
+├── .github/workflows/build.yml # CI workflow with automated test suite
 ├── README.md                   # English documentation
 ├── README.fa.md                # Persian documentation
 └── LICENSE                     # MIT License
@@ -102,35 +114,39 @@
 
 WinTime does not require Visual Studio.
 
-Run:
+To compile:
 
 ```cmd
 build.bat
 ```
 
-The script compiles `Program.cs` into `WinTime.exe`.
+The script compiles `Program.cs` and `Core\*.cs` using the built-in Windows C# compiler into `WinTime.exe`.
 
-> Build requirements depend on the compiler and .NET Framework components available on the Windows installation. The repository does not bundle a third-party compiler or runtime.
+To run the automated unit test suite:
+
+```cmd
+Tests\run_tests.bat
+```
 
 ---
 
 ## 🤖 Automated GitHub Actions Build
 
-When changes are pushed to GitHub:
+Continuous integration workflow executes on every commit:
 
-1. A clean Windows runner is started.
-2. The application is compiled from the repository source.
-3. The resulting executable can be attached to GitHub Releases.
+1. Runs the 16 automated unit tests for SNTP packet math, peer validation, and process execution.
+2. Validates syntax for all PowerShell scripts (`WinTime.ps1`, `install.ps1`).
+3. Compiles the native executable and publishes build artifacts and release binaries.
 
 ---
 
 ## 🇮🇷 Regional NTP Connectivity
 
-Some networks may restrict or interfere with UDP port 123, which is the standard port used by NTP.
+Certain networks or ISPs may restrict or throttle UDP port 123 (NTP).
 
-WinTime therefore provides alternative NTP peers and an HTTPS-based fallback where supported by the configured time source.
-
-The **Iran-Optimized** preset is intended to provide additional regional connectivity options. Actual availability and latency depend on the user's ISP and network conditions.
+WinTime addresses this through:
+- Local Iranian NTP peers in the Iran-Optimized preset (`time.digiboy.ir`, `ntp.iranet.ir`).
+- Automatic failover to HTTPS Date header synchronization (port 443) when UDP 123 is blocked.
 
 ---
 

@@ -21,9 +21,31 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
+      - name: Run Core Unit Tests
+        run: |
+          cmd /c Tests\run_tests.bat
+
+      - name: Validate PowerShell Scripts Syntax
+        run: |
+          $scripts = @("WinTime.ps1", "install.ps1")
+          foreach ($s in $scripts) {
+            Write-Host "Validating $s ..."
+            $errs = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $s).Path, [ref]$null, [ref]$errs) | Out-Null
+            if ($errs -and $errs.Count -gt 0) {
+              throw "Syntax error in $s: $($errs[0].Message)"
+            }
+            Write-Host "  -> $s syntax clean"
+          }
+
       - name: Compile WinTime.exe
         run: |
-          & "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /optimize+ /platform:anycpu /win32manifest:app.manifest /win32icon:app.ico /out:WinTime.exe Program.cs
+          $csc = (Get-ChildItem -Path "C:\Windows\Microsoft.NET\Framework*\v4.0.30319\csc.exe" -ErrorAction SilentlyContinue | Select-Object -Last 1).FullName
+          if (-not $csc) { throw "Built-in Microsoft C# compiler csc.exe not found" }
+          Write-Host "Using compiler: $csc"
+          & $csc /nologo /target:winexe /optimize+ /platform:anycpu /win32manifest:app.manifest /win32icon:app.ico /out:WinTime.exe Program.cs Core\*.cs
+          if ($LASTEXITCODE -ne 0) { throw "Compilation failed with exit code $LASTEXITCODE" }
+          Write-Host "Compiled binary size: $((Get-Item WinTime.exe).Length) bytes"
 
       - name: Digital Code Signing (Optional via GitHub Secrets)
         if: env.SIGNING_CERT_BASE64 != ''
@@ -31,8 +53,10 @@ jobs:
           SIGNING_CERT_BASE64: ${{ secrets.CODE_SIGNING_CERT }}
           SIGNING_PASS: ${{ secrets.CODE_SIGNING_PASS }}
         run: |
+          $signtool = (Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Select-Object -Last 1).FullName
+          if (-not $signtool) { throw "signtool.exe not found" }
           [System.IO.File]::WriteAllBytes("cert.pfx", [System.Convert]::FromBase64String($env:SIGNING_CERT_BASE64))
-          & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe" sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f cert.pfx /p $env:SIGNING_PASS WinTime.exe
+          & $signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f cert.pfx /p $env:SIGNING_PASS WinTime.exe
           Remove-Item cert.pfx -Force
 
       - name: Upload Build Artifact

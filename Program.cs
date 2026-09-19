@@ -14,6 +14,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
+using WindowsTimeManager.Core;
 
 namespace WindowsTimeManager
 {
@@ -270,70 +271,17 @@ namespace WindowsTimeManager
         /// </summary>
         public static bool EnablePrivilege(string privilegeName = "SeSystemtimePrivilege")
         {
-            try
-            {
-                IntPtr hToken = IntPtr.Zero;
-                if (!OpenProcessToken(Process.GetCurrentProcess().Handle, 0x0020 | 0x0008, ref hToken))
-                    return false;
-
-                long luid = 0;
-                if (!LookupPrivilegeValue(null, privilegeName, ref luid))
-                {
-                    CloseHandle(hToken);
-                    return false;
-                }
-
-                TOKEN_PRIVILEGES tp = new TOKEN_PRIVILEGES();
-                tp.PrivilegeCount = 1;
-                tp.Luid = luid;
-                tp.Attributes = 0x00000002;
-
-                AdjustTokenPrivileges(hToken, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero);
-                CloseHandle(hToken);
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
+            string err;
+            return NativeMethods.EnablePrivilege(privilegeName, out err);
         }
 
-        /// <summary>
-        /// Sets the system clock using native Win32 APIs (SetLocalTime / SetSystemTime).
-        /// All command-line or hidden cmd.exe invocations have been eliminated to ensure a clean security posture.
-        /// </summary>
-        public static bool SetSystemClock(int year, int month, int day, int hour, int minute, int second = 0)
+        public static bool SetSystemClock(int year, int month, int day, int hour, int minute, int second = 0, int millisecond = 0)
         {
-            EnablePrivilege("SeSystemtimePrivilege");
-
-            SYSTEMTIME stLocal = new SYSTEMTIME();
-            stLocal.wYear = (ushort)year;
-            stLocal.wMonth = (ushort)month;
-            stLocal.wDay = (ushort)day;
-            stLocal.wHour = (ushort)hour;
-            stLocal.wMinute = (ushort)minute;
-            stLocal.wSecond = (ushort)second;
-            stLocal.wMilliseconds = 0;
-
-            if (SetLocalTime(ref stLocal))
-                return true;
-
-            // Clean fallback: Convert to UTC and call SetSystemTime directly without spawning any shell/cmd processes
             try
             {
-                DateTime dtLocal = new DateTime(year, month, day, hour, minute, second, DateTimeKind.Local);
-                DateTime dtUtc = dtLocal.ToUniversalTime();
-
-                SYSTEMTIME stUtc = new SYSTEMTIME();
-                stUtc.wYear = (ushort)dtUtc.Year;
-                stUtc.wMonth = (ushort)dtUtc.Month;
-                stUtc.wDay = (ushort)dtUtc.Day;
-                stUtc.wHour = (ushort)dtUtc.Hour;
-                stUtc.wMinute = (ushort)dtUtc.Minute;
-                stUtc.wSecond = (ushort)dtUtc.Second;
-                stUtc.wMilliseconds = 0;
-
-                return SetSystemTime(ref stUtc);
+                DateTime dtLocal = new DateTime(year, month, day, hour, minute, second, millisecond, DateTimeKind.Local);
+                string err;
+                return NativeMethods.SetSystemClockUtc(dtLocal.ToUniversalTime(), out err);
             }
             catch
             {
@@ -343,178 +291,52 @@ namespace WindowsTimeManager
 
         public static bool IsAdministrator()
         {
-            try
-            {
-                WindowsIdentity id = WindowsIdentity.GetCurrent();
-                WindowsPrincipal principal = new WindowsPrincipal(id);
-                return principal.IsInRole(WindowsBuiltInRole.Administrator);
-            }
-            catch
-            {
-                return false;
-            }
+            return NativeMethods.IsAdministrator();
         }
     }
 
     // =========================================================================
-    // SECTION 4: Network & Registry Time Helpers
+    // SECTION 4: Network & Registry Time Helpers (Delegated to Core)
     // =========================================================================
     internal static class TimeServiceHelper
     {
         public static List<KeyValuePair<string, string>> GetSystemPeers()
         {
+            string syncType;
+            string activeSource;
+            var peers = TimeServiceManager.GetSystemPeers(out syncType, out activeSource);
             List<KeyValuePair<string, string>> list = new List<KeyValuePair<string, string>>();
-            try
+            foreach (var p in peers)
             {
-                using (RegistryKey key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\W32Time\Parameters"))
-                {
-                    if (key != null)
-                    {
-                        object val = key.GetValue("NtpServer");
-                        if (val != null)
-                        {
-                            string[] parts = val.ToString().Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-                            foreach (string p in parts)
-                            {
-                                string clean = p.Split(',')[0].Trim();
-                                string flag = p.Contains(",") ? p.Split(',')[1].Trim() : "";
-                                if (!string.IsNullOrEmpty(clean))
-                                    list.Add(new KeyValuePair<string, string>(clean, flag));
-                            }
-                        }
-                    }
-                }
+                list.Add(new KeyValuePair<string, string>(p.Host, p.Flag));
             }
-            catch { }
             return list;
         }
 
-        /// <summary>
-        /// Applies NTP peers to Windows Time Service using the official Microsoft w32tm.exe administrative interface.
-        /// Avoids direct low-level registry manipulation to ensure full compliance with Windows security standards.
-        /// </summary>
         public static bool SetSystemPeers(List<string> peerList, out string message)
         {
-            if (peerList == null || peerList.Count == 0)
-            {
-                message = "Peer list cannot be empty.";
-                return false;
-            }
-
-            List<string> cleanList = new List<string>();
-            foreach (var item in peerList)
-            {
-                string host = item.Split(',')[0].Trim();
-                if (!string.IsNullOrEmpty(host) && !host.Contains("?"))
-                {
-                    cleanList.Add(item);
-                }
-            }
-
-            if (cleanList.Count == 0)
-            {
-                message = "No valid peers to apply.";
-                return false;
-            }
-
-            string valStr = string.Join(" ", cleanList.ToArray());
-            try
-            {
-                // Official Microsoft w32tm administrative tool configuration
-                RunHiddenProcess("w32tm.exe", string.Format("/config /manualpeerlist:\"{0}\" /syncfromflags:manual /reliable:yes /update", valStr));
-                RunHiddenProcess("sc.exe", "config w32time start= auto");
-
-                message = "Peers successfully applied to Windows Time Service!";
-                return true;
-            }
-            catch (Exception ex)
-            {
-                message = ex.Message;
-                return false;
-            }
+            return TimeServiceManager.SetSystemPeers(peerList, false, out message);
         }
 
         public static void RunHiddenProcess(string fileName, string args)
         {
-            try
-            {
-                ProcessStartInfo psi = new ProcessStartInfo(fileName, args)
-                {
-                    CreateNoWindow = true,
-                    UseShellExecute = false,
-                    WindowStyle = ProcessWindowStyle.Hidden
-                };
-                Process p = Process.Start(psi);
-                if (p != null) p.WaitForExit(4000);
-            }
-            catch { }
+            ProcessRunner.Execute(fileName, args, 8000);
         }
 
         public static bool QueryNtp(string server, out int latencyMs, out DateTime utcTime)
         {
-            latencyMs = 0;
-            utcTime = DateTime.MinValue;
-            try
-            {
-                using (UdpClient client = new UdpClient())
-                {
-                    client.Client.ReceiveTimeout = 2500;
-                    client.Client.SendTimeout = 2500;
-                    client.Connect(server, 123);
-
-                    byte[] ntpData = new byte[48];
-                    ntpData[0] = 0x1B;
-
-                    Stopwatch sw = Stopwatch.StartNew();
-                    client.Send(ntpData, ntpData.Length);
-
-                    IPEndPoint ep = new IPEndPoint(IPAddress.Any, 0);
-                    byte[] response = client.Receive(ref ep);
-                    sw.Stop();
-                    latencyMs = (int)sw.ElapsedMilliseconds;
-
-                    if (response != null && response.Length >= 48)
-                    {
-                        ulong intPart = (ulong)response[40] << 24 | (ulong)response[41] << 16 | (ulong)response[42] << 8 | (ulong)response[43];
-                        ulong fractPart = (ulong)response[44] << 24 | (ulong)response[45] << 16 | (ulong)response[46] << 8 | (ulong)response[47];
-                        ulong milliseconds = (intPart * 1000) + ((fractPart * 1000) / 0x100000000L);
-
-                        DateTime epoch = new DateTime(1900, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-                        utcTime = epoch.AddMilliseconds((double)milliseconds);
-                        return true;
-                    }
-                }
-            }
-            catch { }
-            return false;
+            NtpQueryResult res = NtpClient.QueryServer(server, 2500);
+            latencyMs = (int)res.RoundTripDelay.TotalMilliseconds;
+            utcTime = res.TargetUtcTime;
+            return res.Success;
         }
 
         public static bool QueryHttpsTime(string url, out int latencyMs, out DateTime utcTime)
         {
-            latencyMs = 0;
-            utcTime = DateTime.MinValue;
-            try
-            {
-                HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
-                req.Method = "HEAD";
-                req.Timeout = 4000;
-                req.UserAgent = "Mozilla/5.0";
-
-                Stopwatch sw = Stopwatch.StartNew();
-                using (HttpWebResponse res = (HttpWebResponse)req.GetResponse())
-                {
-                    sw.Stop();
-                    latencyMs = (int)sw.ElapsedMilliseconds;
-                    string dateHeader = res.Headers["Date"];
-                    if (!string.IsNullOrEmpty(dateHeader))
-                    {
-                        utcTime = DateTime.ParseExact(dateHeader, "ddd, dd MMM yyyy HH:mm:ss 'GMT'", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal);
-                        return true;
-                    }
-                }
-            }
-            catch { }
-            return false;
+            HttpsTimeResult res = HttpsTimeClient.QueryHttpDate(url, 4000);
+            latencyMs = res.LatencyMs;
+            utcTime = res.UtcTime;
+            return res.Success;
         }
     }
 
@@ -1178,8 +1000,8 @@ namespace WindowsTimeManager
 
             // Action 3: Global NTP Sync
             rowGlobal = new SettingsActionRow(
-                "Global International NTP Sync (Direct Atomic Clock)",
-                "Directly queries Cloudflare & Google Tier-1 NTP servers over port 123 / HTTPS (bypasses .ir).",
+                "Global International NTP Consensus Sync",
+                "Queries multiple Stratum 1/2 NTP servers (Cloudflare, Google, pool.ntp.org) with outlier rejection & HTTPS fallback.",
                 "globe",
                 Theme.AccentCyan,
                 "🌐 Sync Global NTP",
@@ -1352,19 +1174,19 @@ namespace WindowsTimeManager
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
 
-            Button btnAll5 = CreatePresetButton("⭐ All 5 (Iran-Optimized)", Color.FromArgb(50, 40, 20), Theme.AccentYellow, (s, e) => {
+            Button btnAll5 = CreatePresetButton("⭐ All 5 (Iran-Optimized)", Color.FromArgb(50, 40, 20), Theme.AccentYellow, () => {
                 List<string> five = new List<string>() { "time.windows.com,0x8", "pool.ntp.org,0x8", "time.cloudflare.com,0x8", "time.digiboy.ir,0x8", "ntp.iranet.ir,0x8" };
-                ApplyPeerList(five);
+                return ApplyPeerList(five);
             });
 
-            Button btnGlobal = CreatePresetButton("🌐 Global Only (3 Servers)", Color.FromArgb(22, 50, 72), Theme.AccentCyan, (s, e) => {
+            Button btnGlobal = CreatePresetButton("🌐 Global Only (3 Servers)", Color.FromArgb(22, 50, 72), Theme.AccentCyan, () => {
                 List<string> three = new List<string>() { "time.windows.com,0x8", "pool.ntp.org,0x8", "time.cloudflare.com,0x8" };
-                ApplyPeerList(three);
+                return ApplyPeerList(three);
             });
 
-            Button btnDefault = CreatePresetButton("🪟 Windows Default Only", Theme.BgControl, Theme.TextSecondary, (s, e) => {
+            Button btnDefault = CreatePresetButton("🪟 Windows Default Only", Theme.BgControl, Theme.TextSecondary, () => {
                 List<string> one = new List<string>() { "time.windows.com,0x8" };
-                ApplyPeerList(one);
+                return ApplyPeerList(one);
             });
 
             pnlPresets.Controls.AddRange(new Control[] { btnAll5, btnGlobal, btnDefault });
@@ -1489,34 +1311,20 @@ namespace WindowsTimeManager
                 return;
             }
 
-            // 1. Strict Validation: Non-ASCII characters (e.g. Persian/Arabic) are rejected immediately
-            foreach (char c in raw)
+            PeerValidationResult val = PeerValidator.Validate(raw);
+            if (!val.IsValid)
             {
-                if (c > 127 || char.IsWhiteSpace(c) || c == ',' || c == ';' || c == '/' || c == '\\' || c == '?' || c == '*' || c == '!')
-                {
-                    Log("[✗] VALIDATION ERROR: Server name contains invalid characters: '" + raw + "'. Only English letters, numbers, hyphens, and dots are allowed.", Theme.AccentRed);
-                    FlashAddHostButton("✗ English Only (No Persian)", Color.FromArgb(95, 25, 25));
-                    return;
-                }
-            }
-
-            // 2. Format validation: must be a valid IP or a domain with at least one dot
-            IPAddress dummyIp;
-            bool isIp = IPAddress.TryParse(raw, out dummyIp);
-            bool isDomain = raw.Contains(".") && !raw.StartsWith(".") && !raw.EndsWith(".") && !raw.Contains("..");
-
-            if (!isIp && !isDomain && !raw.Equals("localhost", StringComparison.OrdinalIgnoreCase))
-            {
-                Log("[✗] VALIDATION ERROR: '" + raw + "' is not a valid domain or IP address format.", Theme.AccentRed);
-                FlashAddHostButton("✗ Invalid Address Format", Color.FromArgb(95, 25, 25));
+                Log("[✗] VALIDATION ERROR: " + val.ErrorMessage, Theme.AccentRed);
+                FlashAddHostButton("✗ Invalid Peer", Color.FromArgb(95, 25, 25), 3000);
                 return;
             }
+            string normHost = val.CleanHost;
 
             // 3. DNS Resolution and Connectivity Test in Background
             btnAddHost.Enabled = false;
             btnAddHost.Text = "⏳ Testing DNS & NTP...";
             btnAddHost.BackColor = Color.FromArgb(35, 45, 60);
-            Log("Testing server reachability: " + raw + " ...");
+            Log("Testing server reachability: " + normHost + " ...");
 
             ThreadPool.QueueUserWorkItem((state) => {
                 try
@@ -1525,13 +1333,13 @@ namespace WindowsTimeManager
                     IPAddress[] addresses = null;
                     try
                     {
-                        addresses = Dns.GetHostAddresses(raw);
+                        addresses = Dns.GetHostAddresses(normHost);
                     }
                     catch
                     {
                         this.Invoke(new Action(() => {
                             FlashAddHostButton("✗ Host Not Found (DNS Error)", Color.FromArgb(95, 25, 25), 3000);
-                            Log("[✗] DNS RESOLUTION FAILED: Hostname '" + raw + "' does not exist or DNS could not resolve it.", Theme.AccentRed);
+                            Log("[✗] DNS RESOLUTION FAILED: Hostname '" + normHost + "' does not exist or DNS could not resolve it.", Theme.AccentRed);
                         }));
                         return;
                     }
@@ -1540,27 +1348,25 @@ namespace WindowsTimeManager
                     {
                         this.Invoke(new Action(() => {
                             FlashAddHostButton("✗ No IP Found", Color.FromArgb(95, 25, 25));
-                            Log("[✗] DNS ERROR: No IP address found for '" + raw + "'.", Theme.AccentRed);
+                            Log("[✗] DNS ERROR: No IP address found for '" + normHost + "'.", Theme.AccentRed);
                         }));
                         return;
                     }
 
                     string resolvedIp = addresses[0].ToString();
-                    Log("  Resolved " + raw + " -> " + resolvedIp);
+                    Log("  Resolved " + normHost + " -> " + resolvedIp);
 
                     // Step B: Query NTP Port 123
-                    int lat;
-                    DateTime utc;
-                    bool ntpOk = TimeServiceHelper.QueryNtp(raw, out lat, out utc);
+                    NtpQueryResult qRes = NtpClient.QueryServer(normHost, 2500);
 
                     this.Invoke(new Action(() => {
-                        if (ntpOk)
+                        if (qRes.Success)
                         {
-                            Log(string.Format("[✓] NTP Test PASSED: {0} replied in {1}ms!", raw, lat), Theme.AccentGreen);
+                            Log(string.Format("[✓] NTP Test PASSED: {0} replied in {1:F1}ms (Stratum {2})!", normHost, qRes.RoundTripDelay.TotalMilliseconds, qRes.Stratum), Theme.AccentGreen);
                         }
                         else
                         {
-                            Log("[!] Notice: DNS resolved, but UDP 123 timed out (may be blocked by your firewall/ISP).", Theme.AccentYellow);
+                            Log("[!] Notice: DNS resolved, but NTP query failed: " + qRes.ErrorMessage + " (may be blocked by firewall/ISP).", Theme.AccentYellow);
                         }
 
                         // Add to current peer list, filtering out any corrupt entries
@@ -1571,7 +1377,7 @@ namespace WindowsTimeManager
                         foreach (var p in existingPeers)
                         {
                             if (p.Key.Contains("?") || string.IsNullOrEmpty(p.Key)) continue;
-                            if (p.Key.Equals(raw, StringComparison.OrdinalIgnoreCase))
+                            if (p.Key.Equals(normHost, StringComparison.OrdinalIgnoreCase))
                                 alreadyExists = true;
                             updatedList.Add(p.Key + ",0x8");
                         }
@@ -1579,14 +1385,21 @@ namespace WindowsTimeManager
                         if (alreadyExists)
                         {
                             FlashAddHostButton("✗ Already in List", Color.FromArgb(95, 25, 25));
-                            Log("[!] Server '" + raw + "' is already in your configured peers list.", Theme.AccentYellow);
+                            Log("[!] Server '" + normHost + "' is already in your configured peers list.", Theme.AccentYellow);
                         }
                         else
                         {
-                            updatedList.Add(raw + ",0x8");
-                            ApplyPeerList(updatedList);
-                            txtCustomHost.Clear();
-                            FlashAddHostButton("✓ Server Added!", Color.FromArgb(20, 85, 45));
+                            updatedList.Add(normHost + ",0x8");
+                            bool ok = ApplyPeerList(updatedList);
+                            if (ok)
+                            {
+                                txtCustomHost.Clear();
+                                FlashAddHostButton("✓ Server Added!", Color.FromArgb(20, 85, 45));
+                            }
+                            else
+                            {
+                                FlashAddHostButton("✗ Need Admin!", Color.FromArgb(95, 25, 25));
+                            }
                         }
                     }));
                 }
@@ -1600,7 +1413,7 @@ namespace WindowsTimeManager
             });
         }
 
-        private Button CreatePresetButton(string text, Color bg, Color fg, EventHandler onClick)
+        private Button CreatePresetButton(string text, Color bg, Color fg, Func<bool> onClick)
         {
             Button btn = new Button()
             {
@@ -1617,38 +1430,60 @@ namespace WindowsTimeManager
             btn.FlatAppearance.BorderSize = 1;
             btn.FlatAppearance.BorderColor = fg;
             btn.Click += (s, e) => {
-                onClick(s, e);
+                btn.Enabled = false;
                 string orig = btn.Text;
-                btn.Text = "✓ Applied!";
-                btn.BackColor = Color.FromArgb(20, 85, 45);
-                btn.ForeColor = Color.White;
-                System.Windows.Forms.Timer t = new System.Windows.Forms.Timer();
-                t.Interval = 2000;
-                t.Tick += (ts, te) => {
-                    t.Stop();
-                    t.Dispose();
-                    btn.Text = orig;
-                    btn.BackColor = bg;
-                    btn.ForeColor = fg;
-                };
-                t.Start();
+                btn.Text = "⏳ Applying...";
+                ThreadPool.QueueUserWorkItem((state) => {
+                    bool ok = onClick();
+                    this.Invoke(new Action(() => {
+                        btn.Enabled = true;
+                        if (ok)
+                        {
+                            btn.Text = "✓ Applied!";
+                            btn.BackColor = Color.FromArgb(20, 85, 45);
+                            btn.ForeColor = Color.White;
+                        }
+                        else
+                        {
+                            btn.Text = "✗ Failed (Admin?)";
+                            btn.BackColor = Color.FromArgb(95, 25, 25);
+                            btn.ForeColor = Color.White;
+                        }
+
+                        System.Windows.Forms.Timer t = new System.Windows.Forms.Timer();
+                        t.Interval = 2000;
+                        t.Tick += (ts, te) => {
+                            t.Stop();
+                            t.Dispose();
+                            btn.Text = orig;
+                            btn.BackColor = bg;
+                            btn.ForeColor = fg;
+                        };
+                        t.Start();
+                    }));
+                });
             };
             return btn;
         }
 
-        private void ApplyPeerList(List<string> peers)
+        private bool ApplyPeerList(List<string> peers)
         {
             string msg;
             bool ok = TimeServiceHelper.SetSystemPeers(peers, out msg);
-            if (ok)
-            {
-                Log("[✓] " + msg);
-                LoadPeers();
-            }
-            else
-            {
-                Log("[✗] Error applying peers: " + msg, Theme.AccentRed);
-            }
+            Action act = () => {
+                if (ok)
+                {
+                    Log("[✓] " + msg, Theme.AccentGreen);
+                    LoadPeers();
+                }
+                else
+                {
+                    Log("[✗] Error applying peers: " + msg, Theme.AccentRed);
+                }
+            };
+            if (this.InvokeRequired) this.Invoke(act);
+            else act();
+            return ok;
         }
 
         // =====================================================================
@@ -1913,7 +1748,7 @@ namespace WindowsTimeManager
                 btnDelete.ForeColor = Color.White;
                 lblStatus.Text = "● Cannot remove last peer";
                 lblStatus.ForeColor = Theme.AccentRed;
-                Log("[!] Cannot remove '" + hostToRemove + "': Windows requires at least one active NTP peer.", Theme.AccentYellow);
+                Log("[!] Cannot remove '" + hostToRemove + "': Windows Time service requires at least one configured NTP peer.", Theme.AccentYellow);
 
                 System.Windows.Forms.Timer resetTimer = new System.Windows.Forms.Timer();
                 resetTimer.Interval = 2500;
@@ -1961,45 +1796,81 @@ namespace WindowsTimeManager
         // =====================================================================
         private void ActionSetRdr2()
         {
+            DialogResult dr = MessageBox.Show(
+                this,
+                "Changing the system clock to October 15, 2019 (RDR2 launch workaround) will affect HTTPS/TLS certificate verification, active browser sessions, and background services until restored.\n\nDo you want to continue?",
+                "Confirm RDR2 Time Shift",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+
+            if (dr != DialogResult.Yes)
+            {
+                Log("[i] RDR2 time change canceled by user.");
+                return;
+            }
+
             rowRdr2.SetLoading("⏳ Setting Clock...");
             ThreadPool.QueueUserWorkItem((state) => {
                 Log("Applying RDR2 Preset time (2019-10-15 21:31:00)...");
-                bool ok = Win32Native.SetSystemClock(2019, 10, 15, 21, 31, 0);
-                if (ok)
-                {
-                    Log("[✓] SUCCESS: RDR2 fixed time (2019-10-15 21:31:00) applied successfully!");
-                    rowRdr2.SetResult(true, "✓ RDR2 Time Set!");
-                }
-                else
-                {
-                    Log("[✗] ERROR: Failed to apply RDR2 time. Please run with Administrator privileges.");
-                    rowRdr2.SetResult(false, "✗ Need Admin!");
-                }
+                DateTime dtLocal = new DateTime(2019, 10, 15, 21, 31, 0, DateTimeKind.Local);
+                string err;
+                bool ok = NativeMethods.SetSystemClockUtc(dtLocal.ToUniversalTime(), out err);
+                this.Invoke(new Action(() => {
+                    if (ok)
+                    {
+                        Log("[✓] SUCCESS: RDR2 fixed time (2019-10-15 21:31:00) applied successfully!", Theme.AccentGreen);
+                        rowRdr2.SetResult(true, "✓ RDR2 Time Set!");
+                    }
+                    else
+                    {
+                        Log("[✗] ERROR: Failed to apply RDR2 time: " + err, Theme.AccentRed);
+                        rowRdr2.SetResult(false, "✗ Need Admin!");
+                    }
+                }));
             });
         }
 
         private void ActionSetCustom()
         {
-            btnApplyCustom.Enabled = false;
-            btnApplyCustom.Text = "⏳ Applying...";
             DateTime d = dtpCustomDate.Value;
             DateTime t = dtpCustomTime.Value;
+            DateTime targetLocal = new DateTime(d.Year, d.Month, d.Day, t.Hour, t.Minute, t.Second, DateTimeKind.Local);
+
+            if (Math.Abs((targetLocal - DateTime.Now).TotalHours) > 24)
+            {
+                DialogResult dr = MessageBox.Show(
+                    this,
+                    string.Format("The selected date/time ({0:yyyy-MM-dd HH:mm:ss}) is more than 24 hours away from current time.\n\nLarge clock adjustments will invalidate HTTPS/TLS certificates, break active web sessions, and disrupt system authentication.\n\nDo you want to proceed?", targetLocal),
+                    "Confirm Large Time Shift",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning);
+
+                if (dr != DialogResult.Yes)
+                {
+                    Log("[i] Custom time change canceled by user.");
+                    return;
+                }
+            }
+
+            btnApplyCustom.Enabled = false;
+            btnApplyCustom.Text = "⏳ Applying...";
 
             ThreadPool.QueueUserWorkItem((state) => {
-                string target = string.Format("{0:0000}-{1:00}-{2:00} {3:00}:{4:00}:{5:00}", d.Year, d.Month, d.Day, t.Hour, t.Minute, t.Second);
-                Log("Applying custom time: " + target);
-                bool ok = Win32Native.SetSystemClock(d.Year, d.Month, d.Day, t.Hour, t.Minute, t.Second);
+                string targetStr = targetLocal.ToString("yyyy-MM-dd HH:mm:ss");
+                Log("Applying custom time: " + targetStr);
+                string err;
+                bool ok = NativeMethods.SetSystemClockUtc(targetLocal.ToUniversalTime(), out err);
                 this.Invoke(new Action(() => {
                     btnApplyCustom.Enabled = true;
                     if (ok)
                     {
-                        Log("[✓] SUCCESS: System time set to " + target);
+                        Log("[✓] SUCCESS: System time set to " + targetStr, Theme.AccentGreen);
                         btnApplyCustom.Text = "✓ Time Applied!";
                         btnApplyCustom.BackColor = Color.FromArgb(20, 85, 45);
                     }
                     else
                     {
-                        Log("[✗] ERROR: Failed to set custom time. Run as Administrator.");
+                        Log("[✗] ERROR: Failed to set custom time: " + err, Theme.AccentRed);
                         btnApplyCustom.Text = "✗ Failed (Need Admin)!";
                         btnApplyCustom.BackColor = Color.FromArgb(95, 25, 25);
                     }
@@ -2022,56 +1893,67 @@ namespace WindowsTimeManager
             rowSync.SetLoading("⏳ Resyncing w32tm...");
             ThreadPool.QueueUserWorkItem((state) => {
                 Log("Triggering Windows Time service synchronization (w32tm /resync)...");
-                TimeServiceHelper.RunHiddenProcess("net.exe", "start w32time");
+                string w32Out;
+                bool ok = TimeServiceManager.Resync(out w32Out);
 
-                Process p = Process.Start(new ProcessStartInfo("w32tm.exe", "/resync /force")
+                if (ok)
                 {
-                    CreateNoWindow = true,
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true
-                });
-                string output = p != null ? p.StandardOutput.ReadToEnd() : "";
-                if (p != null) p.WaitForExit(6000);
-
-                if (p != null && (p.ExitCode == 0 || output.Contains("completed successfully")))
-                {
-                    Log("[✓] SUCCESS: Time synchronized via Windows Time service (w32tm)!");
-                    rowSync.SetResult(true, "✓ Synchronized!");
+                    this.Invoke(new Action(() => {
+                        Log("[✓] SUCCESS: Time synchronized via Windows Time service (w32tm)!", Theme.AccentGreen);
+                        rowSync.SetResult(true, "✓ Synchronized!");
+                    }));
                     return;
                 }
 
-                Log("[!] w32tm returned notice. Falling back to direct UDP NTP sync against registered peers...");
-                var peers = TimeServiceHelper.GetSystemPeers();
-                bool synced = false;
-                foreach (var peer in peers)
-                {
-                    if (peer.Key.Contains("?")) continue;
+                Log("[!] w32tm resync returned failure/notice: " + (string.IsNullOrEmpty(w32Out) ? "exit code error" : w32Out.Trim()));
+                Log("  Falling back to direct SNTP consensus sync from configured registry peers...");
 
-                    Log("  Querying peer: " + peer.Key + " ...");
-                    int lat;
-                    DateTime utc;
-                    if (TimeServiceHelper.QueryNtp(peer.Key, out lat, out utc))
+                string syncType, activeSource;
+                var peers = TimeServiceManager.GetSystemPeers(out syncType, out activeSource);
+                List<string> peerHosts = new List<string>();
+                foreach (var p in peers)
+                {
+                    if (!string.IsNullOrEmpty(p.Host) && !p.Host.Contains("?"))
                     {
-                        DateTime local = utc.ToLocalTime();
-                        Win32Native.SetSystemClock(local.Year, local.Month, local.Day, local.Hour, local.Minute, local.Second);
-                        Log(string.Format("[✓] SUCCESS: Clock synchronized from {0} ({1}ms)", peer.Key, lat));
-                        synced = true;
-                        break;
-                    }
-                    else
-                    {
-                        Log("  " + peer.Key + " unreachable via UDP 123.");
+                        peerHosts.Add(p.Host);
                     }
                 }
 
-                if (synced)
+                if (peerHosts.Count == 0)
                 {
-                    rowSync.SetResult(true, "✓ Synced (NTP)!");
+                    this.Invoke(new Action(() => {
+                        Log("[✗] No valid peers configured in Windows Time service registry to query.", Theme.AccentRed);
+                        rowSync.SetResult(false, "✗ No Valid Peers!");
+                    }));
+                    return;
+                }
+
+                MultiNtpQueryResult multiRes = NtpClient.QueryMultipleSources(peerHosts.ToArray(), 2500);
+                if (multiRes.Success)
+                {
+                    string err;
+                    bool clockOk = NativeMethods.SetSystemClockUtc(multiRes.SelectedUtcTime, out err);
+                    this.Invoke(new Action(() => {
+                        if (clockOk)
+                        {
+                            int total = multiRes.SuccessfulResults.Count + multiRes.FailedResults.Count;
+                            Log(string.Format("[✓] SUCCESS: Direct SNTP consensus applied from {0}/{1} peers (Median Offset: {2:F1}ms)",
+                                multiRes.SuccessfulResults.Count, total, multiRes.MedianOffset.TotalMilliseconds), Theme.AccentGreen);
+                            rowSync.SetResult(true, "✓ Synced (SNTP)!");
+                        }
+                        else
+                        {
+                            Log("[✗] ERROR applying time: " + err, Theme.AccentRed);
+                            rowSync.SetResult(false, "✗ Need Admin!");
+                        }
+                    }));
                 }
                 else
                 {
-                    Log("[✗] ERROR: Could not sync from configured peers. Check firewall or ISP filtering.");
-                    rowSync.SetResult(false, "✗ Sync Failed!");
+                    this.Invoke(new Action(() => {
+                        Log("[✗] ERROR: Direct peer sync failed. " + multiRes.Summary, Theme.AccentRed);
+                        rowSync.SetResult(false, "✗ Sync Failed!");
+                    }));
                 }
             });
         }
@@ -2080,7 +1962,7 @@ namespace WindowsTimeManager
         {
             rowGlobal.SetLoading("⏳ Querying Global NTP...");
             ThreadPool.QueueUserWorkItem((state) => {
-                Log("Starting Global NTP synchronization (International Servers, No .ir)...");
+                Log("Starting Global NTP consensus synchronization (Stratum 1/2 servers)...");
                 string[] globalServers = new string[] {
                     "time.cloudflare.com",
                     "time.google.com",
@@ -2089,60 +1971,73 @@ namespace WindowsTimeManager
                     "time.aws.com"
                 };
 
-                bool synced = false;
-                int bestLat = 0;
-                foreach (string srv in globalServers)
+                MultiNtpQueryResult multiRes = NtpClient.QueryMultipleSources(globalServers, 2500);
+                if (multiRes.Success)
                 {
-                    Log("  Querying Global NTP: " + srv + " ...");
-                    int lat;
-                    DateTime utc;
-                    if (TimeServiceHelper.QueryNtp(srv, out lat, out utc))
-                    {
-                        DateTime local = utc.ToLocalTime();
-                        Win32Native.SetSystemClock(local.Year, local.Month, local.Day, local.Hour, local.Minute, local.Second);
-                        Log(string.Format("[✓] SUCCESS: Clock synchronized from {0} ({1}ms - Tier 1 NTP)", srv, lat));
-                        synced = true;
-                        bestLat = lat;
-                        break;
-                    }
-                }
-
-                if (synced)
-                {
-                    rowGlobal.SetResult(true, string.Format("✓ Synced ({0}ms)!", bestLat));
+                    string err;
+                    bool clockOk = NativeMethods.SetSystemClockUtc(multiRes.SelectedUtcTime, out err);
+                    this.Invoke(new Action(() => {
+                        if (clockOk)
+                        {
+                            int total = multiRes.SuccessfulResults.Count + multiRes.FailedResults.Count;
+                            Log(string.Format("[✓] SUCCESS: Clock synchronized via Global NTP consensus ({0}/{1} servers, Median Offset: {2:F1}ms)",
+                                multiRes.SuccessfulResults.Count, total, multiRes.MedianOffset.TotalMilliseconds), Theme.AccentGreen);
+                            rowGlobal.SetResult(true, "✓ Synced (NTP)!");
+                        }
+                        else
+                        {
+                            Log("[✗] ERROR applying clock: " + err, Theme.AccentRed);
+                            rowGlobal.SetResult(false, "✗ Need Admin!");
+                        }
+                    }));
                     return;
                 }
 
-                if (!synced)
-                {
-                    Log("[!] UDP Port 123 appears blocked. Initiating HTTPS Atomic Time Fallback (Port 443)...");
-                    KeyValuePair<string, string>[] httpsTargets = new KeyValuePair<string, string>[] {
-                        new KeyValuePair<string, string>("https://www.google.com", "Google Global HTTPS"),
-                        new KeyValuePair<string, string>("https://cloudflare.com", "Cloudflare Edge HTTPS"),
-                        new KeyValuePair<string, string>("https://www.microsoft.com", "Microsoft Global HTTPS")
-                    };
+                Log("[!] Global NTP failed or UDP 123 blocked: " + multiRes.Summary);
+                Log("  Falling back to HTTPS Date header sync (Port 443, ~1s precision)...");
 
-                    foreach (var tgt in httpsTargets)
+                string[] httpsTargets = new string[] {
+                    "https://www.google.com",
+                    "https://cloudflare.com",
+                    "https://www.microsoft.com"
+                };
+
+                bool httpsSuccess = false;
+                foreach (string tgt in httpsTargets)
+                {
+                    Log("  Querying HTTPS: " + tgt + " ...");
+                    HttpsTimeResult hRes = HttpsTimeClient.QueryHttpDate(tgt, 4000);
+                    if (hRes.Success)
                     {
-                        Log("  Connecting to: " + tgt.Value + " ...");
-                        int lat;
-                        DateTime utc;
-                        if (TimeServiceHelper.QueryHttpsTime(tgt.Key, out lat, out utc))
-                        {
-                            DateTime local = utc.ToLocalTime();
-                            Win32Native.SetSystemClock(local.Year, local.Month, local.Day, local.Hour, local.Minute, local.Second);
-                            Log(string.Format("[✓] SUCCESS: Clock synchronized from {0} ({1}ms - HTTPS Port 443)", tgt.Value, lat));
-                            synced = true;
-                            rowGlobal.SetResult(true, "✓ Synced (HTTPS 443)!");
-                            break;
-                        }
+                        string err;
+                        bool clockOk = NativeMethods.SetSystemClockUtc(hRes.UtcTime, out err);
+                        this.Invoke(new Action(() => {
+                            if (clockOk)
+                            {
+                                Log(string.Format("[✓] SUCCESS: Clock synchronized via HTTPS Date header from {0} ({1}ms latency, ~1s granularity)", tgt, hRes.LatencyMs), Theme.AccentGreen);
+                                rowGlobal.SetResult(true, "✓ Synced (HTTPS)!");
+                            }
+                            else
+                            {
+                                Log("[✗] ERROR applying clock: " + err, Theme.AccentRed);
+                                rowGlobal.SetResult(false, "✗ Need Admin!");
+                            }
+                        }));
+                        httpsSuccess = true;
+                        break;
+                    }
+                    else
+                    {
+                        Log("  " + tgt + " failed: " + hRes.ErrorMessage, Theme.AccentYellow);
                     }
                 }
 
-                if (!synced)
+                if (!httpsSuccess)
                 {
-                    Log("[✗] ERROR: Failed to reach international time servers.");
-                    rowGlobal.SetResult(false, "✗ Sync Failed!");
+                    this.Invoke(new Action(() => {
+                        Log("[✗] ERROR: Both Global NTP and HTTPS Date fallbacks failed. Check network connection and TLS certificates.", Theme.AccentRed);
+                        rowGlobal.SetResult(false, "✗ Sync Failed!");
+                    }));
                 }
             });
         }
@@ -2176,11 +2071,19 @@ namespace WindowsTimeManager
                             continue;
                         }
 
-                        int lat;
-                        DateTime utc;
-                        bool ok = TimeServiceHelper.QueryNtp(p.Key, out lat, out utc);
-                        string status = ok ? string.Format("● Online ({0} ms)", lat) : "● Unreachable";
-                        Color col = ok ? Theme.AccentGreen : Theme.AccentRed;
+                        NtpQueryResult qRes = NtpClient.QueryServer(p.Key, 2500);
+                        string status;
+                        Color col;
+                        if (qRes.Success)
+                        {
+                            status = string.Format("● {0:F0}ms (Stratum {1})", qRes.RoundTripDelay.TotalMilliseconds, qRes.Stratum);
+                            col = Theme.AccentGreen;
+                        }
+                        else
+                        {
+                            status = "● Unreachable";
+                            col = Theme.AccentRed;
+                        }
                         Log(string.Format("  [{0}] {1} -> {2}", idx, p.Key, status));
 
                         this.Invoke(new Action(() => {
