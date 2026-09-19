@@ -71,7 +71,7 @@ jobs:
         if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'dev') || contains(github.ref, 'beta') }}
+          prerelease: true
           generate_release_notes: true
           files: |
             WinTime.exe
