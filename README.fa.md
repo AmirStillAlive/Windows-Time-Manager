@@ -73,12 +73,19 @@
 * **بدون نیاز به نصب یا دستورات پاورشل؛** فقط کافیست روی `WinTime.exe` دابل‌کلیک کنید تا محیط گرافیکی و مدرن برنامه باز شود.
 * برنامه با دسترسی عادی کاربر (`asInvoker`) باز می‌شود و تنها هنگام اعمال تنظیمات سیستمی، تأییدیه ادمین (UAC) درخواست می‌شود.
 
-### روش دوم: نصب خودکار با اسکریپت بچ (`install.bat`)
-فایل **[`install.bat`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.bat)** را دانلود کرده و با دابل‌کلیک اجرا کنید (یا دستور زیر را در CMD یا PowerShell وارد نمایید):
-```cmd
-curl -sSfL https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.bat -o "%temp%\install.bat" && "%temp%\install.bat"
+### روش دوم: نصب خودکار با اسکریپت نصاب (`install.bat`)
+می‌توانید فایل **[`install.bat`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.bat)** را دانلود کرده و با دابل‌کلیک اجرا کنید، یا دستور زیر را در ترمینال وارد نمایید:
+
+**در محیط PowerShell (ویندوز ۱۰ و ۱۱):**
+```powershell
+irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.bat -OutFile "$env:TEMP\install.bat"; & "$env:TEMP\install.bat"
 ```
-> **نکته:** این روش با ابزار سیستمی `curl.exe` فایل‌ها را مستقیماً در مسیر `%LOCALAPPDATA%\WinTime` بارگیری کرده، محدودیت‌های امنیتی فایل‌های دانلودی را رفع کرده و میانبرهای دسکتاپ و استارت منو را می‌سازد. به دلیل ذخیره‌سازی مستقیم فایل‌ها و عدم اجرای کدهای تحت وب در رم (`iex`)، هیچ‌گونه هشدار کاذب آنتی‌ویروس یا ویندوز دیفندر ایجاد نمی‌شود.
+
+**در محیط Command Prompt (CMD):**
+```cmd
+powershell -Command "irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.bat -OutFile '%TEMP%\install.bat'" && "%TEMP%\install.bat"
+```
+> **نکته:** این اسکریپت نصاب کاملاً مستقل بوده و حتی روی سیستم‌های ویندوز قدیمی بدون ابزار `curl` با قابلیت دانلود بومی کار می‌کند. همچنین به دلیل ذخیره‌سازی فایل‌ها روی دیسک و عدم اجرای مستقیم در رم (`iex`)، هیچ‌گونه اخطار کاذب از طرف آنتی‌ویروس یا Windows Defender ایجاد نمی‌شود.
 
 ### روش سوم: دانلود دستی اسکریپت و اجرای آفلاین (CLI)
 ۱. هر دو فایل [`WinTime.bat`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.bat) و [`WinTime.ps1`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.ps1) را دانلود کرده (یا از آخرین انتشار در [GitHub Releases](https://github.com/AmirStillAlive/Windows-Time-Manager/releases) دریافت کنید) و کنار یکدیگر در یک پوشه قرار دهید.

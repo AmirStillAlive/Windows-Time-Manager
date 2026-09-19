@@ -17,24 +17,24 @@ echo [*] Downloading WinTime components...
 
 :: 1. Try downloading WinTime.exe from latest release
 echo       Downloading WinTime.exe ...
-curl -sSfL -m 30 "%RELEASES_LATEST%/WinTime.exe" -o "%INSTALL_DIR%\WinTime.exe" >nul 2>&1
+call :Download "%RELEASES_LATEST%/WinTime.exe" "%INSTALL_DIR%\WinTime.exe"
 if exist "%INSTALL_DIR%\WinTime.exe" (
     echo       [OK] WinTime.exe downloaded.
 ) else (
-    echo       [-] WinTime.exe not found in latest release assets, downloading script engine...
+    echo       [-] WinTime.exe not found in latest release, downloading script engine...
 )
 
 :: 2. Download WinTime.bat launcher
 echo       Downloading WinTime.bat ...
-curl -sSfL -m 15 "%REPO_RAW%/WinTime.bat" -o "%INSTALL_DIR%\WinTime.bat" >nul 2>&1
+call :Download "%REPO_RAW%/WinTime.bat" "%INSTALL_DIR%\WinTime.bat"
 
 :: 3. Download WinTime.ps1 CLI engine
 echo       Downloading WinTime.ps1 ...
-curl -sSfL -m 15 "%REPO_RAW%/WinTime.ps1" -o "%INSTALL_DIR%\WinTime.ps1" >nul 2>&1
+call :Download "%REPO_RAW%/WinTime.ps1" "%INSTALL_DIR%\WinTime.ps1"
 
 :: 4. Download app.ico
 echo       Downloading app.ico ...
-curl -sSfL -m 15 "%REPO_RAW%/app.ico" -o "%INSTALL_DIR%\app.ico" >nul 2>&1
+call :Download "%REPO_RAW%/app.ico" "%INSTALL_DIR%\app.ico"
 
 :: Check if at least WinTime.exe OR (WinTime.ps1 + WinTime.bat) exists
 if not exist "%INSTALL_DIR%\WinTime.exe" (
@@ -101,3 +101,16 @@ if exist "%INSTALL_DIR%\WinTime.exe" (
     start "" "%INSTALL_DIR%\WinTime.bat"
 )
 exit /b 0
+
+:: Universal download subroutine: uses curl if available, falls back to native WebClient
+:Download
+set "DL_URL=%~1"
+set "DL_DEST=%~2"
+where curl >nul 2>&1
+if %ERRORLEVEL% equ 0 (
+    curl.exe -sSfL -m 30 "%DL_URL%" -o "%DL_DEST%" >nul 2>&1
+    if exist "%DL_DEST%" exit /b 0
+)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[System.Net.ServicePointManager]::SecurityProtocol = 3072; (New-Object System.Net.WebClient).DownloadFile('%DL_URL%', '%DL_DEST%')" >nul 2>&1
+if exist "%DL_DEST%" exit /b 0
+exit /b 1
