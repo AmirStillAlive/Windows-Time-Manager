@@ -66,21 +66,26 @@
 
 ## 🚀 نصب و راه‌اندازی
 
-شما می‌توانید از یکی از سه روش زیر برای نصب یا اجرای برنامه استفاده کنید:
+یکی از روش‌های زیر را متناسب با نیاز خود برای نصب یا اجرای برنامه انتخاب کنید:
 
-### روش اول: نصب خودکار با یک خط دستور تحت وب (پیشنهادی)
+### روش اول: دانلود مستقیم نسخه گرافیکی (پیشنهادی)
+فایل اجرایی مستقل **[`WinTime.exe`](https://github.com/AmirStillAlive/Windows-Time-Manager/releases/latest)** را مستقیماً از آخرین انتشار در [GitHub Releases](https://github.com/AmirStillAlive/Windows-Time-Manager/releases) دریافت کنید.
+* **بدون نیاز به نصب یا دستورات پاورشل؛** فقط کافیست روی `WinTime.exe` دابل‌کلیک کنید تا محیط گرافیکی و مدرن برنامه باز شود.
+* برنامه با دسترسی عادی کاربر (`asInvoker`) باز می‌شود و تنها هنگام اعمال تنظیمات سیستمی، تأییدیه ادمین (UAC) درخواست می‌شود.
+
+### روش دوم: نصب خودکار با یک خط دستور تحت وب
 یک محیط PowerShell باز کنید و دستور زیر را اجرا نمایید:
 ```powershell
 irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.ps1 | iex
 ```
 > **نکته:** این روش بدون نیاز به تغییر در `ExecutionPolicy` و به صورت امن در حافظه اجرا می‌شود. اسکریپت فایل‌ها را در مسیر `%LOCALAPPDATA%\WinTime` بارگیری کرده، صحت هش SHA-256 آن‌ها را بر اساس چک‌سام‌های رسمی بررسی می‌کند، میانبر دسکتاپ و منوی استارت را ایجاد کرده و فایل حذف نصب خودکار را قرار می‌دهد.
 
-### روش دوم: دانلود دستی پوشه و اجرای آفلاین
+### روش سوم: دانلود دستی اسکریپت و اجرای آفلاین (CLI)
 ۱. هر دو فایل [`WinTime.bat`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.bat) و [`WinTime.ps1`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.ps1) را دانلود کرده (یا از آخرین انتشار در [GitHub Releases](https://github.com/AmirStillAlive/Windows-Time-Manager/releases) دریافت کنید) و کنار یکدیگر در یک پوشه قرار دهید.
 ۲. روی فایل **`WinTime.bat` دابل‌کلیک کنید**. لانچر بچ به طور خودکار محدودیت‌های اجرای پاورشل و برچسب‌های اینترنتی را دور زده و برنامه را اجرا می‌کند.
 > **نکته:** مرورگرها فایل‌های دانلود شده را با برچسب امنیتی Mark-of-the-Web نشانه‌گذاری می‌کنند. از `WinTime.bat` استفاده کنید یا فایل را پیش از اجرای مستقیم رفع انسداد (Unblock) کنید.
 
-### روش سوم: اجرای مستقیم از خط فرمان (کاربران حرفه‌ای)
+### روش چهارم: اجرای مستقیم از خط فرمان (کاربران حرفه‌ای)
 در صورتی که می‌خواهید مستقیماً از طریق کنسول پاورشل را اجرا کنید:
 ```cmd
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\path\to\WinTime.ps1"

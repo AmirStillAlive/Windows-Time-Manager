@@ -66,21 +66,26 @@ What started as a tiny quick-fix script for that game issue gradually grew: Wind
 
 ## 🚀 Installation
 
-Choose any of the three installation or launch methods below:
+Choose any of the installation or launch methods below:
 
-### Method 1: One-Liner Web Installer (Recommended)
+### Method 1: Standalone Graphical App (Recommended)
+Download the standalone executable **[`WinTime.exe`](https://github.com/AmirStillAlive/Windows-Time-Manager/releases/latest)** directly from the latest [GitHub Release](https://github.com/AmirStillAlive/Windows-Time-Manager/releases).
+* **No installation or PowerShell commands required.** Simply double-click `WinTime.exe` to launch the modern graphical interface.
+* Runs without initial UAC elevation (`asInvoker`), requesting elevation only when administrative actions are performed.
+
+### Method 2: One-Liner Web Installer (Automated Setup)
 Open PowerShell and run:
 ```powershell
 irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.ps1 | iex
 ```
 > **Note:** This installation method streams directly into memory and does not depend on local `ExecutionPolicy` restrictions. It downloads components into `%LOCALAPPDATA%\WinTime`, validates SHA-256 integrity fail-closed against official checksums, creates Desktop and Start Menu shortcuts, and provides an uninstaller.
 
-### Method 2: Offline / Manual Folder Download
+### Method 3: Offline / Manual Script Download (CLI)
 1. Download both [`WinTime.bat`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.bat) and [`WinTime.ps1`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.ps1) (or download packaged assets from the latest [GitHub Release](https://github.com/AmirStillAlive/Windows-Time-Manager/releases)) and place them in the same folder.
 2. **Double-click `WinTime.bat`**. The batch launcher automatically bypasses restrictive execution policies, clears Mark-of-the-Web metadata, and starts the CLI.
 > **Note:** Web browsers mark downloaded files with Mark-of-the-Web (MOTW). Use `WinTime.bat` to launch or unblock the script before direct PowerShell execution.
 
-### Method 3: Advanced Command-Line Launch
+### Method 4: Advanced Command-Line Launch
 If running PowerShell directly from the terminal:
 ```cmd
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\path\to\WinTime.ps1"
