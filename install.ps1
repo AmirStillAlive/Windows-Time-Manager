@@ -3,14 +3,19 @@
     WinTime - One-Liner Web Installer & Runner
 .DESCRIPTION
     Run directly in PowerShell without manual downloading:
-    irm https://raw.githubusercontent.com/<username>/Windows-Time-Manager/main/install.ps1 | iex
+    irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/dev/install.ps1 | iex
 #>
 
 # ---- Administrator Elevation ----
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
     Write-Host "  [*] Requesting Administrator privileges..." -ForegroundColor Yellow
-    $url = if ($MyInvocation.Line -match "https?://\S+") { $matches[0] } else { "https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.ps1" }
+    # Detect the URL this script was actually invoked from, defaulting to dev until main is updated
+    $url = if ($MyInvocation.Line -match "https?://\S+") {
+        $matches[0]
+    } else {
+        "https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/dev/install.ps1"
+    }
     Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"irm $url | iex`"" -Verb RunAs
     exit
 }
@@ -24,7 +29,7 @@ Write-Host "================================================================" -F
 Write-Host ""
 
 $installDir = "$env:LOCALAPPDATA\WinTime"
-if (-not (Test-Path $installDir)) {
+if (-not (Test-Path -LiteralPath $installDir)) {
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 }
 
@@ -34,54 +39,57 @@ if ([System.Enum]::IsDefined([System.Net.SecurityProtocolType], "Tls13")) {
     [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls13
 }
 
-$defaultVersion = "v0.1.3"
-$version = $defaultVersion
-try {
-    $releaseJson = Invoke-RestMethod -Uri "https://api.github.com/repos/AmirStillAlive/Windows-Time-Manager/releases/latest" -Headers @{ "User-Agent" = "WinTime-Installer" } -TimeoutSec 5 -ErrorAction Stop
-    if ($releaseJson.tag_name) {
-        $version = $releaseJson.tag_name
+# Helper functions
+function Test-UrlReachable([string]$testUrl) {
+    try {
+        $req = [System.Net.HttpWebRequest]::Create($testUrl)
+        $req.Method = "HEAD"
+        $req.Timeout = 5000
+        $req.UserAgent = "WinTime-Installer"
+        $resp = $req.GetResponse()
+        $status = [int]$resp.StatusCode
+        $resp.Close()
+        return ($status -ge 200 -and $status -lt 400)
+    } catch {
+        return $false
     }
-} catch {
-    # Fallback to hardcoded default version if offline, rate-limited, or tag unavailable
-    $version = $defaultVersion
 }
 
-$rawBase = "https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/$version"
-$releaseBase = "https://github.com/AmirStillAlive/Windows-Time-Manager/releases/download/$version"
-
-Write-Host "  [*] Target Installation Directory: $installDir" -ForegroundColor Gray
-Write-Host "  [*] Downloading application components ($version)..." -ForegroundColor Cyan
-
-# Helper functions for integrity verification
-function Verify-FileIntegrity {
+function Test-FileIntegrity {
     param(
         [string]$FilePath,
         [string]$FileName,
-        [hashtable]$Checksums
+        [hashtable]$Checksums,
+        [string]$SourceUrl
     )
-    if (-not (Test-Path $FilePath)) { return $false }
+    if (-not (Test-Path -LiteralPath $FilePath)) { return $false }
     if ($Checksums.ContainsKey($FileName)) {
-        $expected = $Checksums[$FileName]
-        $actual = (Get-FileHash -Path $FilePath -Algorithm SHA256).Hash
-        if ($actual.ToLowerInvariant() -ne $expected.ToLowerInvariant()) {
-            Write-Host "FAILED (SHA-256 mismatch!)" -ForegroundColor Red
-            Write-Host "  [X] SECURITY ALERT: Hash mismatch for $FileName!" -ForegroundColor Red
-            Write-Host "      Expected: $expected" -ForegroundColor Red
-            Write-Host "      Actual:   $actual" -ForegroundColor Red
-            Remove-Item $FilePath -Force -ErrorAction SilentlyContinue
+        $expected = $Checksums[$FileName].Trim().ToLowerInvariant()
+        $actual = (Get-FileHash -LiteralPath $FilePath -Algorithm SHA256).Hash.Trim().ToLowerInvariant()
+        if ($actual -ne $expected) {
+            Write-Host "FAILED" -ForegroundColor Red
+            Write-Host "  ================================================================" -ForegroundColor Red
+            Write-Host "  [X] SECURITY ERROR: SHA-256 Checksum Mismatch for $FileName!" -ForegroundColor Red
+            Write-Host "  ================================================================" -ForegroundColor Red
+            Write-Host "      Source URL: $SourceUrl" -ForegroundColor Gray
+            Write-Host "      Expected:   $expected" -ForegroundColor Yellow
+            Write-Host "      Actual:     $actual" -ForegroundColor Red
+            Write-Host "  [!] Maintainer hint: Check .gitattributes / line endings (LF vs CRLF) for this file." -ForegroundColor Yellow
+            Write-Host "  ================================================================" -ForegroundColor Red
+            Remove-Item -LiteralPath $FilePath -Force -ErrorAction SilentlyContinue
             return $false
         }
         Write-Host "OK (SHA-256 verified)" -ForegroundColor Green
         return $true
     } else {
-        Write-Host "OK (No hash in SHA256SUMS.txt)" -ForegroundColor Yellow
+        Write-Host "OK (No entry in SHA256SUMS.txt)" -ForegroundColor Yellow
         return $true
     }
 }
 
-function Check-AuthenticodeSignature {
+function Test-AuthenticodeSignatureStatus {
     param([string]$FilePath)
-    if (-not (Test-Path $FilePath)) { return }
+    if (-not (Test-Path -LiteralPath $FilePath)) { return }
     try {
         $sig = Get-AuthenticodeSignature -FilePath $FilePath -ErrorAction Stop
         if ($sig.Status -eq 'Valid') {
@@ -90,157 +98,296 @@ function Check-AuthenticodeSignature {
             Write-Host "  [!] Warning: Binary is not code-signed. Integrity verified via SHA-256 only." -ForegroundColor Yellow
         } else {
             Write-Host "  [X] CRITICAL SECURITY ALERT: Invalid Authenticode signature (Status: $($sig.Status))!" -ForegroundColor Red
-            Remove-Item $FilePath -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $FilePath -Force -ErrorAction SilentlyContinue
             throw "Authenticode signature validation failed for $FilePath (Status: $($sig.Status))"
         }
     } catch {
-        if ($_ -match "Authenticode signature validation failed") { throw $_ }
+        if ($_.ToString() -match "Authenticode signature validation failed") { throw $_ }
         Write-Host "  [!] Warning: Could not check Authenticode signature: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
 
-# Download SHA256SUMS.txt
-$sumsPath = "$installDir\SHA256SUMS.txt"
-$checksums = @{}
-$sumsDownloaded = $false
+# ---- Resolve Source Candidates ----
+Write-Host "  [*] Resolving installation source..." -ForegroundColor Cyan
 
+$candidateSources = @()
+
+# 1. Check for release tag from GitHub Releases API
+$releaseTag = $null
 try {
-    Invoke-WebRequest -Uri "$releaseBase/SHA256SUMS.txt" -OutFile $sumsPath -UseBasicParsing -TimeoutSec 15
-    if ((Test-Path $sumsPath) -and (Get-Item $sumsPath).Length -gt 0) { $sumsDownloaded = $true }
-} catch {}
-
-if (-not $sumsDownloaded) {
-    try {
-        Invoke-WebRequest -Uri "$rawBase/SHA256SUMS.txt" -OutFile $sumsPath -UseBasicParsing -TimeoutSec 15
-        if ((Test-Path $sumsPath) -and (Get-Item $sumsPath).Length -gt 0) { $sumsDownloaded = $true }
-    } catch {}
-}
-
-if ($sumsDownloaded) {
-    Get-Content $sumsPath | ForEach-Object {
-        if ($_ -match '^\s*([a-fA-F0-9]{64})\s+\*?(.+?)\s*$') {
-            $checksums[$matches[2].Trim()] = $matches[1].Trim()
-        }
-    }
-} else {
-    Write-Host "  [!] Warning: Could not retrieve SHA256SUMS.txt. Integrity verification will be degraded." -ForegroundColor Yellow
-}
-
-# Download WinTime.exe from GitHub Releases
-$exePath = "$installDir\WinTime.exe"
-Write-Host "      Downloading WinTime.exe ... " -NoNewline -ForegroundColor Gray
-$exeDownloaded = $false
-try {
-    # Attempt download from GitHub Releases asset first
-    Invoke-WebRequest -Uri "$releaseBase/WinTime.exe" -OutFile $exePath -UseBasicParsing -TimeoutSec 30
-    if ((Test-Path $exePath) -and (Get-Item $exePath).Length -gt 10000) {
-        $exeDownloaded = $true
-        Write-Host "Downloaded ($((Get-Item $exePath).Length) bytes), verifying ... " -NoNewline -ForegroundColor Gray
-    }
-} catch {}
-
-if (-not $exeDownloaded) {
-    try {
-        # Fallback to raw repository branch/tag
-        Invoke-WebRequest -Uri "$rawBase/WinTime.exe" -OutFile $exePath -UseBasicParsing -TimeoutSec 30
-        if ((Test-Path $exePath) -and (Get-Item $exePath).Length -gt 10000) {
-            $exeDownloaded = $true
-            Write-Host "Downloaded ($((Get-Item $exePath).Length) bytes), verifying ... " -NoNewline -ForegroundColor Gray
-        }
-    } catch {}
-}
-
-if ($exeDownloaded) {
-    if ($checksums.Count -gt 0) {
-        $verified = Verify-FileIntegrity -FilePath $exePath -FileName "WinTime.exe" -Checksums $checksums
-        if (-not $verified) {
-            $exeDownloaded = $false
-        }
-    } else {
-        Write-Host "OK (Unverified)" -ForegroundColor Yellow
-    }
-
-    if ($exeDownloaded) {
-        try {
-            Check-AuthenticodeSignature -FilePath $exePath
-        } catch {
-            Write-Host "  [X] Installation of WinTime.exe aborted due to signature failure." -ForegroundColor Red
-            $exeDownloaded = $false
-        }
-    }
-} else {
-    Write-Host "Unavailable (Will use PowerShell CLI engine)" -ForegroundColor Yellow
-    if (Test-Path $exePath) { Remove-Item $exePath -Force -ErrorAction SilentlyContinue }
-}
-
-# Download WinTime.ps1 (CLI engine - required fallback)
-$ps1Path = "$installDir\WinTime.ps1"
-Write-Host "      Downloading WinTime.ps1 ... " -NoNewline -ForegroundColor Gray
-$ps1Downloaded = $false
-try {
-    Invoke-WebRequest -Uri "$rawBase/WinTime.ps1" -OutFile $ps1Path -UseBasicParsing -TimeoutSec 20
-    if ((Test-Path $ps1Path) -and (Get-Item $ps1Path).Length -gt 1000) {
-        $ps1Downloaded = $true
-        if ($checksums.Count -gt 0) {
-            $verified = Verify-FileIntegrity -FilePath $ps1Path -FileName "WinTime.ps1" -Checksums $checksums
-            if (-not $verified) {
-                $ps1Downloaded = $false
-                throw "Integrity verification failed for WinTime.ps1"
-            }
-        } else {
-            Write-Host "OK ($((Get-Item $ps1Path).Length) bytes)" -ForegroundColor Green
-        }
-    } else {
-        throw "Downloaded file is empty or incomplete."
+    $apiResp = Invoke-RestMethod -Uri "https://api.github.com/repos/AmirStillAlive/Windows-Time-Manager/releases/latest" -Headers @{ "User-Agent" = "WinTime-Installer" } -TimeoutSec 5 -ErrorAction Stop
+    if ($apiResp -and $apiResp.tag_name) {
+        $releaseTag = $apiResp.tag_name
     }
 } catch {
-    Write-Host "FAILED" -ForegroundColor Red
-    Write-Host "  [X] CRITICAL ERROR: Failed to download or verify WinTime.ps1: $($_.Exception.Message)" -ForegroundColor Red
-    if (-not $exeDownloaded) {
-        Write-Host "  [X] Installation aborted: Neither native binary nor CLI script could be retrieved and verified." -ForegroundColor Red
-        exit 1
+    Write-Host "      (GitHub Releases API unreachable or rate-limited; trying repository refs)" -ForegroundColor DarkGray
+}
+
+if ($releaseTag) {
+    $candidateSources += @{
+        Name = "GitHub Release Assets ($releaseTag)"
+        Base = "https://github.com/AmirStillAlive/Windows-Time-Manager/releases/download/$releaseTag"
+        Probe = "https://github.com/AmirStillAlive/Windows-Time-Manager/releases/download/$releaseTag/SHA256SUMS.txt"
+    }
+    $candidateSources += @{
+        Name = "GitHub Raw Tag ($releaseTag)"
+        Base = "https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/$releaseTag"
+        Probe = "https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/$releaseTag/SHA256SUMS.txt"
     }
 }
 
-# Download app.ico (optional icon)
-$icoPath = "$installDir\app.ico"
-Write-Host "      Downloading app.ico ... " -NoNewline -ForegroundColor Gray
-try {
-    Invoke-WebRequest -Uri "$rawBase/app.ico" -OutFile $icoPath -UseBasicParsing -TimeoutSec 15
-    if ((Test-Path $icoPath) -and (Get-Item $icoPath).Length -gt 100) {
-        Write-Host "OK" -ForegroundColor Green
-    } else {
+# 2. Add branch refs in priority order
+$candidateSources += @{
+    Name = "GitHub Raw dev branch"
+    Base = "https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/dev"
+    Probe = "https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/dev/SHA256SUMS.txt"
+}
+$candidateSources += @{
+    Name = "GitHub Raw main branch"
+    Base = "https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main"
+    Probe = "https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/SHA256SUMS.txt"
+}
+
+# Attempt installation from candidates in sequence
+$installedSuccessfully = $false
+$exeDownloaded = $false
+
+foreach ($src in $candidateSources) {
+    Write-Host "  [*] Checking source: $($src.Name) ... " -NoNewline -ForegroundColor Gray
+    if (-not (Test-UrlReachable $src.Probe)) {
+        Write-Host "Unreachable" -ForegroundColor DarkGray
+        continue
+    }
+    Write-Host "Reachable" -ForegroundColor Green
+
+    $sourceBase = $src.Base
+    Write-Host "  [*] Using Source Base: $sourceBase" -ForegroundColor Cyan
+
+    # Step A: Download SHA256SUMS.txt from this source
+    $sumsPath = "$installDir\SHA256SUMS.txt"
+    $checksums = @{}
+    try {
+        Invoke-WebRequest -Uri "$sourceBase/SHA256SUMS.txt" -OutFile $sumsPath -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+        if ((Test-Path -LiteralPath $sumsPath) -and (Get-Item -LiteralPath $sumsPath).Length -gt 0) {
+            Get-Content -LiteralPath $sumsPath | ForEach-Object {
+                if ($_ -match '^\s*([a-fA-F0-9]{64})\s+\*?(.+?)\s*$') {
+                    $checksums[$matches[2].Trim()] = $matches[1].Trim()
+                }
+            }
+        }
+    } catch {
+        Write-Host "  [!] Warning: Failed to retrieve SHA256SUMS.txt from $sourceBase" -ForegroundColor Yellow
+    }
+
+    # Step B: Download WinTime.exe (optional GUI binary)
+    $exePath = "$installDir\WinTime.exe"
+    Write-Host "      Downloading WinTime.exe ... " -NoNewline -ForegroundColor Gray
+    $exeDownloaded = $false
+    try {
+        Invoke-WebRequest -Uri "$sourceBase/WinTime.exe" -OutFile $exePath -UseBasicParsing -TimeoutSec 30 -ErrorAction Stop
+        if ((Test-Path -LiteralPath $exePath) -and (Get-Item -LiteralPath $exePath).Length -gt 10000) {
+            $exeDownloaded = $true
+            Write-Host "Downloaded ($((Get-Item -LiteralPath $exePath).Length) bytes), verifying ... " -NoNewline -ForegroundColor Gray
+            if ($checksums.Count -gt 0) {
+                if (-not (Test-FileIntegrity -FilePath $exePath -FileName "WinTime.exe" -Checksums $checksums -SourceUrl "$sourceBase/WinTime.exe")) {
+                    $exeDownloaded = $false
+                }
+            } else {
+                Write-Host "OK (Unverified)" -ForegroundColor Yellow
+            }
+            if ($exeDownloaded) {
+                Unblock-File -LiteralPath $exePath -ErrorAction SilentlyContinue
+                try {
+                    Test-AuthenticodeSignatureStatus -FilePath $exePath
+                } catch {
+                    Write-Host "  [X] WinTime.exe rejected due to invalid signature." -ForegroundColor Red
+                    $exeDownloaded = $false
+                }
+            }
+        }
+    } catch {
+        Write-Host "Unavailable (Will use CLI engine)" -ForegroundColor DarkGray
+        if (Test-Path -LiteralPath $exePath) { Remove-Item -LiteralPath $exePath -Force -ErrorAction SilentlyContinue }
+    }
+
+    # Step C: Download WinTime.ps1 (required CLI engine)
+    $ps1Path = "$installDir\WinTime.ps1"
+    Write-Host "      Downloading WinTime.ps1 ... " -NoNewline -ForegroundColor Gray
+    $ps1Downloaded = $false
+    try {
+        Invoke-WebRequest -Uri "$sourceBase/WinTime.ps1" -OutFile $ps1Path -UseBasicParsing -TimeoutSec 20 -ErrorAction Stop
+        if ((Test-Path -LiteralPath $ps1Path) -and (Get-Item -LiteralPath $ps1Path).Length -gt 1000) {
+            $ps1Downloaded = $true
+            if ($checksums.Count -gt 0) {
+                if (-not (Test-FileIntegrity -FilePath $ps1Path -FileName "WinTime.ps1" -Checksums $checksums -SourceUrl "$sourceBase/WinTime.ps1")) {
+                    $ps1Downloaded = $false
+                }
+            } else {
+                Write-Host "OK ($((Get-Item -LiteralPath $ps1Path).Length) bytes)" -ForegroundColor Green
+            }
+            if ($ps1Downloaded) {
+                Unblock-File -LiteralPath $ps1Path -ErrorAction SilentlyContinue
+            }
+        }
+    } catch {
+        Write-Host "FAILED" -ForegroundColor Red
+        Write-Host "  [!] Error downloading WinTime.ps1: $($_.Exception.Message)" -ForegroundColor Red
+    }
+
+    # Step D: Download WinTime.bat (required CLI launcher)
+    $batPath = "$installDir\WinTime.bat"
+    Write-Host "      Downloading WinTime.bat ... " -NoNewline -ForegroundColor Gray
+    $batDownloaded = $false
+    try {
+        Invoke-WebRequest -Uri "$sourceBase/WinTime.bat" -OutFile $batPath -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+        if ((Test-Path -LiteralPath $batPath) -and (Get-Item -LiteralPath $batPath).Length -gt 50) {
+            $batDownloaded = $true
+            if ($checksums.Count -gt 0) {
+                if (-not (Test-FileIntegrity -FilePath $batPath -FileName "WinTime.bat" -Checksums $checksums -SourceUrl "$sourceBase/WinTime.bat")) {
+                    $batDownloaded = $false
+                }
+            } else {
+                Write-Host "OK ($((Get-Item -LiteralPath $batPath).Length) bytes)" -ForegroundColor Green
+            }
+            if ($batDownloaded) {
+                Unblock-File -LiteralPath $batPath -ErrorAction SilentlyContinue
+            }
+        }
+    } catch {
         Write-Host "Skipped" -ForegroundColor DarkGray
     }
-} catch {
-    Write-Host "Skipped" -ForegroundColor DarkGray
+
+    # Step E: Download app.ico (optional icon)
+    $icoPath = "$installDir\app.ico"
+    Write-Host "      Downloading app.ico ... " -NoNewline -ForegroundColor Gray
+    try {
+        Invoke-WebRequest -Uri "$sourceBase/app.ico" -OutFile $icoPath -UseBasicParsing -TimeoutSec 15 -ErrorAction SilentlyContinue
+        if ((Test-Path -LiteralPath $icoPath) -and (Get-Item -LiteralPath $icoPath).Length -gt 100) {
+            Write-Host "OK" -ForegroundColor Green
+            Unblock-File -LiteralPath $icoPath -ErrorAction SilentlyContinue
+        } else {
+            Write-Host "Skipped" -ForegroundColor DarkGray
+        }
+    } catch {
+        Write-Host "Skipped" -ForegroundColor DarkGray
+    }
+
+    # Check if this source successfully provided the runnable application
+    if ($exeDownloaded -or ($ps1Downloaded -and $batDownloaded)) {
+        $installedSuccessfully = $true
+        break
+    } else {
+        Write-Host "  [!] Installation incomplete from $($src.Name). Falling back to next source..." -ForegroundColor Yellow
+    }
 }
 
-# Create Desktop Shortcut
+if (-not $installedSuccessfully) {
+    Write-Host ""
+    Write-Host "  ================================================================" -ForegroundColor Red
+    Write-Host "  [X] CRITICAL INSTALLATION FAILURE" -ForegroundColor Red
+    Write-Host "  ================================================================" -ForegroundColor Red
+    Write-Host "  Could not retrieve and verify application components from any source." -ForegroundColor Red
+    Write-Host "  Please check your internet connection or download manually from:" -ForegroundColor Yellow
+    Write-Host "  https://github.com/AmirStillAlive/Windows-Time-Manager" -ForegroundColor Cyan
+    exit 1
+}
+
+# ---- Create Shortcuts & Uninstaller ----
 $wsh = New-Object -ComObject WScript.Shell
-$shortcutPath = "$env:USERPROFILE\Desktop\WinTime.lnk"
-$shortcut = $wsh.CreateShortcut($shortcutPath)
+
+# 1. Desktop Shortcut
+$desktopShortcutPath = "$env:USERPROFILE\Desktop\WinTime.lnk"
+$desktopShortcut = $wsh.CreateShortcut($desktopShortcutPath)
 if ($exeDownloaded) {
-    $shortcut.TargetPath = "$installDir\WinTime.exe"
+    $desktopShortcut.TargetPath = "$installDir\WinTime.exe"
+} elseif (Test-Path -LiteralPath "$installDir\WinTime.bat") {
+    $desktopShortcut.TargetPath = "$installDir\WinTime.bat"
 } else {
-    $shortcut.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-    $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$installDir\WinTime.ps1`""
+    $desktopShortcut.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+    $desktopShortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$installDir\WinTime.ps1`""
 }
-$shortcut.WorkingDirectory = $installDir
-if (Test-Path "$installDir\app.ico") {
-    $shortcut.IconLocation = "$installDir\app.ico, 0"
+$desktopShortcut.WorkingDirectory = $installDir
+if (Test-Path -LiteralPath "$installDir\app.ico") {
+    $desktopShortcut.IconLocation = "$installDir\app.ico, 0"
 }
-$shortcut.Description = "WinTime - Windows Time & NTP Manager"
-$shortcut.Save()
+$desktopShortcut.Description = "WinTime - Windows Time & NTP Manager"
+$desktopShortcut.Save()
+
+# 2. Start Menu Shortcuts
+$startMenuDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\WinTime"
+if (-not (Test-Path -LiteralPath $startMenuDir)) {
+    New-Item -ItemType Directory -Path $startMenuDir -Force | Out-Null
+}
+
+$startMenuShortcutPath = "$startMenuDir\WinTime.lnk"
+$startMenuShortcut = $wsh.CreateShortcut($startMenuShortcutPath)
+if ($exeDownloaded) {
+    $startMenuShortcut.TargetPath = "$installDir\WinTime.exe"
+} elseif (Test-Path -LiteralPath "$installDir\WinTime.bat") {
+    $startMenuShortcut.TargetPath = "$installDir\WinTime.bat"
+} else {
+    $startMenuShortcut.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+    $startMenuShortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$installDir\WinTime.ps1`""
+}
+$startMenuShortcut.WorkingDirectory = $installDir
+if (Test-Path -LiteralPath "$installDir\app.ico") {
+    $startMenuShortcut.IconLocation = "$installDir\app.ico, 0"
+}
+$startMenuShortcut.Description = "WinTime - Windows Time & NTP Manager"
+$startMenuShortcut.Save()
+
+# 3. Create uninstall.ps1 and Start Menu Uninstall Shortcut
+$uninstallerPath = "$installDir\uninstall.ps1"
+$uninstallerContent = @"
+# WinTime Uninstaller
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Write-Host "Uninstalling WinTime..." -ForegroundColor Yellow
+
+`$installDir = "$env:LOCALAPPDATA\WinTime"
+`$desktopLnk = "$env:USERPROFILE\Desktop\WinTime.lnk"
+`$startMenuDir = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\WinTime"
+
+if (Test-Path -LiteralPath `$desktopLnk) {
+    Remove-Item -LiteralPath `$desktopLnk -Force -ErrorAction SilentlyContinue
+    Write-Host "  [-] Removed Desktop shortcut." -ForegroundColor Gray
+}
+
+if (Test-Path -LiteralPath `$startMenuDir) {
+    Remove-Item -LiteralPath `$startMenuDir -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host "  [-] Removed Start Menu shortcuts." -ForegroundColor Gray
+}
+
+if (Test-Path -LiteralPath `$installDir) {
+    Start-Process cmd.exe -ArgumentList "/c timeout /t 1 /nobreak >nul & rd /s /q `"`$installDir`"" -WindowStyle Hidden
+    Write-Host "  [-] Removed WinTime directory." -ForegroundColor Gray
+}
+
+Write-Host ""
+Write-Host "  [OK] WinTime has been successfully uninstalled." -ForegroundColor Green
+Start-Sleep -Seconds 2
+"@
+[System.IO.File]::WriteAllText($uninstallerPath, $uninstallerContent, (New-Object System.Text.UTF8Encoding $false))
+Unblock-File -LiteralPath $uninstallerPath -ErrorAction SilentlyContinue
+
+$uninstallLnkPath = "$startMenuDir\Uninstall WinTime.lnk"
+$uninstallLnk = $wsh.CreateShortcut($uninstallLnkPath)
+$uninstallLnk.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+$uninstallLnk.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$installDir\uninstall.ps1`""
+$uninstallLnk.WorkingDirectory = $installDir
+$uninstallLnk.Description = "Uninstall WinTime"
+$uninstallLnk.Save()
 
 Write-Host ""
 Write-Host "  [OK] Successfully installed to: $installDir" -ForegroundColor Green
-Write-Host "  [OK] Desktop shortcut created: $shortcutPath" -ForegroundColor Green
+Write-Host "  [OK] Desktop shortcut created: $desktopShortcutPath" -ForegroundColor Green
+Write-Host "  [OK] Start Menu shortcut created: $startMenuShortcutPath" -ForegroundColor Green
 Write-Host ""
 Write-Host "  [*] Launching WinTime..." -ForegroundColor Cyan
 
 if ($exeDownloaded) {
     Start-Process "$installDir\WinTime.exe"
+} elseif (Test-Path -LiteralPath "$installDir\WinTime.bat") {
+    Start-Process "$installDir\WinTime.bat"
 } else {
     Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$installDir\WinTime.ps1`""
 }

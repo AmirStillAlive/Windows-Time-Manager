@@ -2,32 +2,77 @@
 # Lightweight Windows Time & NTP Management CLI
 
 try {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $ErrorActionPreference = 'Stop'
 
-# ---- Self-Elevation (Administrator Check) ----
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {
-    Write-Host "  [*] Requesting Administrator privileges..." -ForegroundColor Yellow
-    $scriptPath = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Definition }
-    if ($scriptPath -and (Test-Path $scriptPath)) {
-        Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`"" -Verb RunAs
-        exit 0
-    } else {
-        Write-Host ""
-        Write-Host "  [X] ERROR: Administrator privileges are required, but the script path could not be resolved." -ForegroundColor Red
-        Write-Host "      This happens when executing via pipeline (irm ... | iex), pasted into console, or in PowerShell ISE." -ForegroundColor Red
-        Write-Host ""
-        Write-Host "      Please run WinTime from a saved file with Administrator privileges:" -ForegroundColor Yellow
-        Write-Host "        1. Double-click WinTime.bat (recommended), OR" -ForegroundColor Cyan
-        Write-Host "        2. Right-click WinTime.ps1 -> 'Run with PowerShell', OR" -ForegroundColor Cyan
-        Write-Host "        3. Open PowerShell as Administrator, then execute: .\WinTime.ps1" -ForegroundColor Cyan
-        Write-Host ""
-        Write-Host "  Press Enter to exit..." -ForegroundColor Gray
-        try { [void][Console]::ReadLine() } catch { Start-Sleep -Seconds 5 }
-        exit 1
+    # Defensive MOTW self-heal:
+    # Note: This only helps environments that already loaded the script into memory (e.g. Unrestricted or Bypass hosts).
+    # It cannot rescue an initial RemoteSigned load refusal (RC-1) where execution was blocked before reaching line 1.
+    # That must be handled externally by WinTime.bat, install.ps1, or manual unblocking.
+    if ($PSCommandPath -and (Test-Path -LiteralPath $PSCommandPath)) {
+        try {
+            $hasZone = Get-Item -LiteralPath $PSCommandPath -Stream Zone.Identifier -ErrorAction SilentlyContinue
+            if ($hasZone) {
+                Unblock-File -LiteralPath $PSCommandPath -ErrorAction SilentlyContinue
+            }
+        } catch {}
     }
-}
 
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    # ---- Self-Elevation (Administrator Check) ----
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $isAdmin) {
+        Write-Host "  [*] Requesting Administrator privileges..." -ForegroundColor Yellow
+        $scriptPath = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Definition }
+        $origDir = (Get-Location).Path
+        if ($scriptPath -and (Test-Path -LiteralPath $scriptPath)) {
+            $forwardArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$scriptPath`"")
+            if ($args -and $args.Count -gt 0) {
+                foreach ($a in $args) {
+                    if ($a -match '\s') { $forwardArgs += "`"$a`"" } else { $forwardArgs += "$a" }
+                }
+            }
+            $argString = $forwardArgs -join " "
+            try {
+                Start-Process powershell.exe -ArgumentList $argString -WorkingDirectory $origDir -Verb RunAs -ErrorAction Stop
+                exit 0
+            } catch [System.ComponentModel.Win32Exception] {
+                if ($_.Exception.NativeErrorCode -eq 1223) {
+                    Write-Host ""
+                    Write-Host "  [!] Elevation was declined by user (UAC prompt canceled)." -ForegroundColor Yellow
+                    Write-Host "      WinTime requires Administrator privileges to configure time and services." -ForegroundColor Yellow
+                    Write-Host ""
+                    Write-Host "  Press Enter to exit..." -ForegroundColor Gray
+                    try { [void][Console]::ReadLine() } catch { Start-Sleep -Seconds 5 }
+                    exit 1
+                }
+                throw $_
+            } catch {
+                if ($_.Exception.Message -match "canceled by the user" -or ($_.Exception.InnerException -and $_.Exception.InnerException.Message -match "canceled by the user")) {
+                    Write-Host ""
+                    Write-Host "  [!] Elevation was declined by user (UAC prompt canceled)." -ForegroundColor Yellow
+                    Write-Host "      WinTime requires Administrator privileges to configure time and services." -ForegroundColor Yellow
+                    Write-Host ""
+                    Write-Host "  Press Enter to exit..." -ForegroundColor Gray
+                    try { [void][Console]::ReadLine() } catch { Start-Sleep -Seconds 5 }
+                    exit 1
+                }
+                throw $_
+            }
+        } else {
+            Write-Host ""
+            Write-Host "  [X] ERROR: Administrator privileges are required, but the script path could not be resolved." -ForegroundColor Red
+            Write-Host "      This happens when executing via pipeline (irm ... | iex), pasted into console, or in PowerShell ISE." -ForegroundColor Red
+            Write-Host ""
+            Write-Host "      Please run WinTime from a saved file with Administrator privileges:" -ForegroundColor Yellow
+            Write-Host "        1. Double-click WinTime.bat (recommended), OR" -ForegroundColor Cyan
+            Write-Host "        2. Right-click WinTime.ps1 -> 'Run with PowerShell', OR" -ForegroundColor Cyan
+            Write-Host "        3. Open PowerShell as Administrator, then execute: .\WinTime.ps1" -ForegroundColor Cyan
+            Write-Host ""
+            Write-Host "  Press Enter to exit..." -ForegroundColor Gray
+            try { [void][Console]::ReadLine() } catch { Start-Sleep -Seconds 5 }
+            exit 1
+        }
+    }
 
 function Get-ConfiguredPeers {
     $list = @()
@@ -51,20 +96,50 @@ function Get-ConfiguredPeers {
     return $list
 }
 
-function Set-ConfiguredPeers($peerObjects) {
+function Set-ConfiguredPeers {
+    param(
+        $peerObjects,
+        [switch]$AllowDomainOverride
+    )
     if (-not $peerObjects -or $peerObjects.Count -eq 0) {
         Write-Host "  [X] Error: Peer list cannot be empty. Windows Time service requires at least one peer." -ForegroundColor Red
         return $false
     }
 
-    # Domain join check
+    # Domain join check - parity with GUI / TimeServiceManager
+    $isDomainJoined = $false
+    $domainName = ""
     try {
         $comp = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
         if ($comp -and $comp.PartOfDomain) {
-            Write-Host "  [!] Notice: Machine is joined to domain '$($comp.Domain)'. Active Directory Domain Controllers" -ForegroundColor Yellow
-            Write-Host "      may override manually configured NTP peers via Group Policy." -ForegroundColor Yellow
+            $isDomainJoined = $true
+            $domainName = $comp.Domain
         }
     } catch {}
+
+    if ($isDomainJoined -and -not $AllowDomainOverride) {
+        Write-Host ""
+        Write-Host "  ================================================================" -ForegroundColor Red
+        Write-Host "  [X] DOMAIN-JOINED PROTECTION ACTIVE" -ForegroundColor Red
+        Write-Host "  ================================================================" -ForegroundColor Red
+        Write-Host "  This machine is joined to Active Directory domain '$domainName'." -ForegroundColor Yellow
+        Write-Host "  Overriding manual NTP peers might disrupt enterprise domain Kerberos" -ForegroundColor Yellow
+        Write-Host "  authentication and time hierarchy." -ForegroundColor Yellow
+        Write-Host ""
+        if ([Environment]::UserInteractive) {
+            Write-Host "  Do you want to override and apply manual NTP peers anyway? (y/N): " -ForegroundColor Cyan -NoNewline
+            $ans = (Read-Host).Trim()
+            if ($ans -ne "y" -and $ans -ne "Y") {
+                Write-Host "  [*] Operation aborted by user. Domain time settings preserved." -ForegroundColor DarkGray
+                return $false
+            }
+            Write-Host "  [!] Domain override accepted by administrator." -ForegroundColor Yellow
+        } else {
+            Write-Host "  [X] Blocked: Reconfiguration rejected on domain-joined machine." -ForegroundColor Red
+            Write-Host "      Use -AllowDomainOverride to bypass." -ForegroundColor Red
+            return $false
+        }
+    }
 
     $valStr = ($peerObjects | ForEach-Object { "$($_.Host),$($_.Flag)" }) -join " "
     try {
@@ -177,8 +252,12 @@ function Show-Header {
 }
 
 function ConvertTo-NtpTimestamp([datetime]$utcDate) {
+    # RFC 4330 Era-inference heuristic:
+    # 2036-02-07 06:28:16 UTC marks the boundary between Era 0 and Era 1.
+    $era1Base = [datetime]::SpecifyKind([datetime]"2036-02-07 06:28:16", [System.DateTimeKind]::Utc)
     $epoch = [datetime]::SpecifyKind([datetime]"1900-01-01 00:00:00", [System.DateTimeKind]::Utc)
-    $span = $utcDate - $epoch
+    $baseEpoch = if ($utcDate -ge $era1Base) { $era1Base } else { $epoch }
+    $span = $utcDate - $baseEpoch
     $sec = [uint32]$span.TotalSeconds
     $frac = [uint32](($span.TotalSeconds - [math]::Floor($span.TotalSeconds)) * 4294967296.0)
     return @($sec, $frac)
@@ -188,9 +267,17 @@ function ConvertFrom-NtpTimestamp([byte[]]$bytes, [int]$offset) {
     $sec = [uint32](([uint32]$bytes[$offset] -shl 24) -bor ([uint32]$bytes[$offset + 1] -shl 16) -bor ([uint32]$bytes[$offset + 2] -shl 8) -bor [uint32]$bytes[$offset + 3])
     $frac = [uint32](([uint32]$bytes[$offset + 4] -shl 24) -bor ([uint32]$bytes[$offset + 5] -shl 16) -bor ([uint32]$bytes[$offset + 6] -shl 8) -bor [uint32]$bytes[$offset + 7])
     if ($sec -eq 0 -and $frac -eq 0) { return $null }
-    $epoch = [datetime]::SpecifyKind([datetime]"1900-01-01 00:00:00", [System.DateTimeKind]::Utc)
+
+    # RFC 4330 Section 3: Era-inference heuristic for NTP rollover (2036-02-07 06:28:16 UTC)
+    # Timestamps with the high bit set (sec >= 0x80000000) belong to Era 0 (1968 - 2036).
+    # Timestamps with the high bit clear (sec < 0x80000000) belong to Era 1 (2036 - 2172).
+    $baseEpoch = if ($sec -lt 2147483648L) {
+        [datetime]::SpecifyKind([datetime]"2036-02-07 06:28:16", [System.DateTimeKind]::Utc)
+    } else {
+        [datetime]::SpecifyKind([datetime]"1900-01-01 00:00:00", [System.DateTimeKind]::Utc)
+    }
     $ms = ($frac * 1000.0) / 4294967296.0
-    return $epoch.AddSeconds($sec).AddMilliseconds($ms)
+    return $baseEpoch.AddSeconds($sec).AddMilliseconds($ms)
 }
 
 function Get-NtpTimeFromHost($hostName, $timeoutMs = 2500) {
@@ -298,44 +385,79 @@ function Get-HttpsTimeFromHost($url, $name) {
         } catch {}
     }
 
+    $httpDate = $null
+    $latencyMs = 0
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
+    # Strategy 1: Prefer System.Net.Http.HttpClient when available
+    $usedClient = $false
     try {
-        $req = [System.Net.HttpWebRequest]::Create($url)
-        $req.Timeout = 4000
-        $req.Method = "HEAD"
-        $req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; WinTime)"
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        $res = $req.GetResponse()
+        $handler = New-Object System.Net.Http.HttpClientHandler
+        $client = New-Object System.Net.Http.HttpClient($handler)
+        $client.Timeout = [TimeSpan]::FromSeconds(4)
+        $client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64; WinTime)")
+        $reqMsg = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Head, $url)
+        $respTask = $client.SendAsync($reqMsg, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead)
+        $response = $respTask.GetAwaiter().GetResult()
         $sw.Stop()
-        $httpDate = $res.Headers["Date"]
-        $res.Close()
-        if ($httpDate) {
-            $formats = @(
-                "ddd, dd MMM yyyy HH:mm:ss 'GMT'",
-                "ddd, dd MMM yyyy HH:mm:ss GMT",
-                "dddd, dd-MMM-yy HH:mm:ss 'GMT'",
-                "dddd, dd-MMM-yy HH:mm:ss GMT",
-                "ddd MMM d HH:mm:ss yyyy",
-                "ddd MMM  d HH:mm:ss yyyy",
-                "ddd MMM dd HH:mm:ss yyyy",
-                "r"
-            )
-            $utc = [datetime]::MinValue
-            $parsed = [datetime]::TryParseExact($httpDate.Trim(), $formats, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal, [ref]$utc)
-            if ($parsed) {
-                return @{ Success = $true; Host = $name; UtcTime = $utc; LatencyMs = $sw.ElapsedMilliseconds }
-            } else {
-                return @{ Success = $false; Host = $name; Error = "Failed to parse HTTP Date format: $httpDate" }
+        $latencyMs = $sw.ElapsedMilliseconds
+        if ($response.Headers.Date) {
+            $httpDate = $response.Headers.Date.ToString()
+        } elseif ($response.Content -and $response.Content.Headers.LastModified) {
+            $httpDate = $response.Content.Headers.LastModified.ToString()
+        }
+        $response.Dispose()
+        $client.Dispose()
+        $usedClient = $true
+    } catch {}
+
+    # Strategy 2: Graceful fallback for Windows PowerShell 5.1 / HttpWebRequest
+    if (-not $usedClient -or [string]::IsNullOrWhiteSpace($httpDate)) {
+        try {
+            $sw.Restart()
+            $req = [System.Net.HttpWebRequest]::Create($url)
+            $req.Timeout = 4000
+            $req.Method = "HEAD"
+            $req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; WinTime)"
+            $res = $req.GetResponse()
+            $sw.Stop()
+            $latencyMs = $sw.ElapsedMilliseconds
+            $httpDate = $res.Headers["Date"]
+            $res.Close()
+        } catch [System.Net.WebException] {
+            if ($_.Exception.Status -eq [System.Net.WebExceptionStatus]::TrustFailure) {
+                return @{ Success = $false; Host = $name; Error = "TLS Certificate trust failure (local clock may be severely skewed, e.g. RDR2 2019 preset)" }
             }
+            return @{ Success = $false; Host = $name; Error = $_.Exception.Message }
+        } catch {
+            return @{ Success = $false; Host = $name; Error = $_.Exception.Message }
         }
-    } catch [System.Net.WebException] {
-        if ($_.Exception.Status -eq [System.Net.WebExceptionStatus]::TrustFailure) {
-            return @{ Success = $false; Host = $name; Error = "TLS Certificate trust failure (local clock may be severely skewed, e.g. RDR2 2019 preset)" }
-        }
-        return @{ Success = $false; Host = $name; Error = $_.Exception.Message }
-    } catch {
-        return @{ Success = $false; Host = $name; Error = $_.Exception.Message }
     }
-    return @{ Success = $false; Host = $name; Error = "No Date header returned" }
+
+    if ($httpDate) {
+        [string[]]$formats = @(
+            "ddd, dd MMM yyyy HH:mm:ss 'GMT'",
+            "ddd, dd MMM yyyy HH:mm:ss GMT",
+            "dddd, dd-MMM-yy HH:mm:ss 'GMT'",
+            "dddd, dd-MMM-yy HH:mm:ss GMT",
+            "ddd MMM d HH:mm:ss yyyy",
+            "ddd MMM  d HH:mm:ss yyyy",
+            "ddd MMM dd HH:mm:ss yyyy",
+            "r"
+        )
+        $utc = [datetime]::MinValue
+        $parsed = [datetime]::TryParseExact($httpDate.Trim(), $formats, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal, [ref]$utc)
+        if (-not $parsed) {
+            $parsed = [datetime]::TryParse($httpDate.Trim(), [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal, [ref]$utc)
+        }
+        if ($parsed) {
+            return @{ Success = $true; Host = $name; UtcTime = $utc.ToUniversalTime(); LatencyMs = $latencyMs }
+        } else {
+            return @{ Success = $false; Host = $name; Error = "Failed to parse HTTP Date format: $httpDate" }
+        }
+    }
+
+    return @{ Success = $false; Host = $name; Error = "No Date header returned from $url" }
 }
 
 function Sync-SystemPeers {

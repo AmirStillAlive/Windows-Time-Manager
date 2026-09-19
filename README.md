@@ -43,6 +43,7 @@ What started as a tiny quick-fix script for that game issue gradually grew: Wind
 ### 2. ⚙️ NTP Peer Management
 * **Manage Peers:** View, add, and remove configured time servers in the Windows registry.
 * **Input Validation:** Checks IPv4, IPv6, and FQDN addresses before applying to avoid misconfiguration.
+* **Domain Protection:** Detects Active Directory domain membership to avoid disrupting enterprise Kerberos time hierarchies without explicit administrative approval.
 * **Ready Presets:**
   * **⭐ Iran-Optimized:** Includes reliable local and international servers.
   * **🌐 Global Tier-1:** Cloudflare, Google, and NTP Pool.
@@ -63,13 +64,95 @@ What started as a tiny quick-fix script for that game issue gradually grew: Wind
 
 ---
 
+## 🚀 Installation
+
+Choose any of the three installation or launch methods below:
+
+### Method 1: One-Liner Web Installer (Recommended)
+Open PowerShell and run:
+```powershell
+irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/dev/install.ps1 | iex
+```
+> **Note:** This installation method streams directly into memory and does not touch or depend on local `ExecutionPolicy` restrictions. It downloads all components into `%LOCALAPPDATA%\WinTime`, validates SHA-256 integrity, creates Desktop and Start Menu shortcuts, and provides an automatic uninstaller.
+
+### Method 2: Offline / Manual Folder Download
+1. Download both [`WinTime.bat`](WinTime.bat) and [`WinTime.ps1`](WinTime.ps1) and place them in the same folder.
+2. **Double-click `WinTime.bat`**. The batch launcher automatically bypasses restrictive execution policies, clears Mark-of-the-Web metadata, and starts the CLI.
+
+### Method 3: Advanced Command-Line Launch
+If running PowerShell directly from the terminal:
+```cmd
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\path\to\WinTime.ps1"
+```
+
+---
+
+## 🔍 Verifying Downloads
+
+WinTime releases publish cryptographic SHA-256 checksums in `SHA256SUMS.txt`. You can independently verify file integrity using PowerShell:
+
+```powershell
+Get-FileHash .\WinTime.exe, .\WinTime.ps1, .\WinTime.bat -Algorithm SHA256 | Format-Table -AutoSize
+```
+Compare the output hashes with the published entries in [`SHA256SUMS.txt`](SHA256SUMS.txt).
+
+---
+
+## 🛠️ Troubleshooting
+
+### 1. Script is blocked: "File ... cannot be loaded because running scripts is disabled" or "is not digitally signed"
+* **Symptom:**
+  ```text
+  .\WinTime.ps1 : File C:\...\WinTime.ps1 cannot be loaded.
+  The file C:\...\WinTime.ps1 is not digitally signed. You cannot run this script on the
+  current system. ... FullyQualifiedErrorId : UnauthorizedAccess
+  ```
+* **Why this happens:** Files downloaded from web browsers carry Windows **Mark-of-the-Web (MOTW)** (`Zone.Identifier: ZoneId=3`). When your PowerShell execution policy is `RemoteSigned`, Windows blocks unsigned scripts downloaded from the internet *at load time*, before any script code can run.
+* **Remedies:**
+  * **Option A (Simplest):** Launch using `WinTime.bat` instead of the `.ps1` file.
+  * **Option B:** Unblock the downloaded script file:
+    ```powershell
+    Unblock-File -LiteralPath .\WinTime.ps1
+    ```
+  * **Option C:** Check current execution policies:
+    ```powershell
+    Get-ExecutionPolicy -List
+    ```
+    To permit local scripts for your current user session:
+    ```powershell
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+    ```
+
+### 2. Parenthesized duplicate filenames: `.\WinTime (2).ps1`
+* **Symptom:** You download multiple copies of the script and run:
+  ```powershell
+  .\WinTime (2).ps1
+  ```
+* **Why this happens:** PowerShell argument parsing splits `.\WinTime (2).ps1` into the command `.\WinTime` and argument `(2).ps1`. PowerShell automatically appends `.ps1` to the command name and executes `.\WinTime.ps1` instead of `(2)`.
+* **Remedy:** Always invoke files with spaces or parentheses using the call operator `&` and quotes:
+  ```powershell
+  & ".\WinTime (2).ps1"
+  ```
+  *(Or delete duplicate numbered files and use `WinTime.bat`.)*
+
+### 3. Extracting from ZIP Archives
+If you downloaded WinTime inside a `.zip` archive, Windows applies MOTW to every extracted file. To avoid issues, unblock the `.zip` archive **before** extracting:
+1. Right-click the `.zip` file -> **Properties**.
+2. Check **Unblock** at the bottom of the General tab, then click **OK**.
+3. Alternatively, run:
+   ```powershell
+   Unblock-File -LiteralPath .\Windows-Time-Manager.zip
+   ```
+
+---
+
 ## 📁 Repository Structure
 
 ```text
 ├── WinTime.bat                 # Easy double-click batch launcher for CLI
-├── WinTime.ps1                 # Standalone PowerShell script
+├── WinTime.ps1                 # Standalone PowerShell CLI engine
 ├── Program.cs                  # Windows Forms UI application (C#)
-├── Core/                       # Core modules
+├── Core/                       # Core engine modules
 │   ├── NtpPacket.cs            # RFC 4330 / 5905 SNTP packet handling & math
 │   ├── NtpClient.cs            # Multi-source NTP consensus & outlier filtering
 │   ├── ProcessRunner.cs        # Process runner with exit-code validation
@@ -77,7 +160,7 @@ What started as a tiny quick-fix script for that game issue gradually grew: Wind
 │   ├── NativeMethods.cs        # Win32 privilege & system time APIs
 │   ├── HttpsTimeClient.cs      # Fallback HTTPS Date header client
 │   └── TimeServiceManager.cs   # Windows Time service configuration
-├── Tests/                      # Unit test suite
+├── Tests/                      # Automated unit test suite
 │   ├── UnitTests.cs            # Protocol correctness & validation tests
 │   └── run_tests.bat           # Test runner
 ├── app.manifest                # Invoker execution level & DPI awareness manifest
@@ -85,8 +168,10 @@ What started as a tiny quick-fix script for that game issue gradually grew: Wind
 ├── build.bat                   # Local build script (uses csc.exe)
 ├── install.ps1                 # One-liner web installer with hash & signature checks
 ├── SHA256SUMS.txt              # Cryptographic SHA-256 release checksums
-├── .github/workflows/build.yml # CI workflow for tests & release packaging
+├── .gitattributes              # Deterministic line-ending specifications
+├── SECURITY.md                 # Security policy & threat disclosures
 ├── CHANGELOG.md                # Version release notes & changelog
+├── .github/workflows/build.yml # CI workflow for tests & release packaging
 ├── README.md                   # English documentation
 ├── README.fa.md                # Persian documentation
 └── LICENSE                     # MIT License
@@ -105,7 +190,7 @@ To build:
 build.bat
 ```
 
-To run the test suite:
+To run the automated unit test suite:
 ```cmd
 Tests\run_tests.bat
 ```
