@@ -16,11 +16,13 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue)](https://www.microsoft.com/windows)
 [![Language](https://img.shields.io/badge/language-C%23-purple)](#)
 
+
+> ⚠️ **WinTime is currently in alpha. Expect bugs, breaking changes, and incomplete features. No guarantees are provided at this stage.**
 ---
 
 ## Why WinTime?
 
-* **🚀 Tiny executable (~60 KB):** A compact Windows utility with no bundled third-party runtime, interpreter, or large framework package.
+* **🚀 Tiny executable (~200 KB):** A compact Windows utility with no bundled third-party runtime, interpreter, or large framework package.
 
 * **⚡ Fast startup:** Designed for quick launch and minimal overhead.
 
