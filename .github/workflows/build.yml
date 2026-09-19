@@ -1,39 +1,118 @@
 name: Build and Release WinTime
 
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   push:
-    branches: [ main ]
+    branches: [ main, dev ]
     tags: [ 'v*' ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, dev ]
   release:
     types: [ published ]
   workflow_dispatch:
 
 jobs:
   build:
-    name: Compile Native Executable (C#)
+    name: Compile Native Executable (C#) & Package
     runs-on: windows-latest
     permissions:
-      contents: write
+      contents: read
+
+    env:
+      SIGNING_CERT_BASE64: ${{ secrets.CODE_SIGNING_CERT }}
+      SIGNING_PASS: ${{ secrets.CODE_SIGNING_PASS }}
 
     steps:
+      - name: Configure Git CRLF Policy
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
+      - name: Version Consistency Check
+        run: |
+          $expectedVersion = "0.1.3"
+          $checks = @(
+            @{ Path = "Program.cs"; Pattern = 'AssemblyFileVersion\("0\.1\.3\.0"\)' },
+            @{ Path = "app.manifest"; Pattern = 'assemblyIdentity version="0\.1\.3\.0"' },
+            @{ Path = "WinTime.ps1"; Pattern = 'WINTIME v0\.1\.3' },
+            @{ Path = "install.ps1"; Pattern = 'WinTime v0\.1\.3' },
+            @{ Path = "README.md"; Pattern = 'v0\.1\.3' },
+            @{ Path = "README.fa.md"; Pattern = '0\.1\.3' },
+            @{ Path = "CHANGELOG.md"; Pattern = '\[0\.1\.3\]' }
+          )
+          foreach ($c in $checks) {
+            Write-Host "Checking version in $($c.Path)..."
+            $content = Get-Content -LiteralPath $c.Path -Raw
+            if ($content -notmatch $c.Pattern) {
+              throw "Version consistency failure: $($c.Path) did not match pattern $($c.Pattern)"
+            }
+          }
+          Write-Host "All components verified at version $expectedVersion."
+
+      - name: Run Core Unit Tests
+        run: |
+          cmd /c Tests\run_tests.bat
+
+      - name: Run PowerShell Parity Tests
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File Tests\test_parity.ps1
+
+      - name: Validate PowerShell Scripts Syntax
+        run: |
+          $scripts = @("WinTime.ps1", "install.ps1", "Tests\test_parity.ps1")
+          foreach ($s in $scripts) {
+            Write-Host "Validating $s ..."
+            $errs = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $s).Path, [ref]$null, [ref]$errs) | Out-Null
+            if ($errs -and $errs.Count -gt 0) {
+              throw "Syntax error in $($s): $($errs[0].Message)"
+            }
+            Write-Host "  -> $s syntax clean"
+          }
+
       - name: Compile WinTime.exe
         run: |
-          & "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /optimize+ /platform:anycpu /win32manifest:app.manifest /win32icon:app.ico /out:WinTime.exe Program.cs
+          $csc = (Get-ChildItem -Path "C:\Windows\Microsoft.NET\Framework*\v4.0.30319\csc.exe" -ErrorAction SilentlyContinue | Select-Object -Last 1).FullName
+          if (-not $csc) { throw "Built-in Microsoft C# compiler csc.exe not found" }
+          Write-Host "Using compiler: $csc"
+          & $csc /nologo /target:winexe /r:System.Net.Http.dll /warn:4 /warnaserror /optimize+ /platform:anycpu /win32manifest:app.manifest /win32icon:app.ico /out:WinTime.exe Program.cs Core\*.cs
+          if ($LASTEXITCODE -ne 0) { throw "Compilation failed with exit code $LASTEXITCODE" }
+          Write-Host "Compiled binary size: $((Get-Item WinTime.exe).Length) bytes"
 
       - name: Digital Code Signing (Optional via GitHub Secrets)
         if: env.SIGNING_CERT_BASE64 != ''
-        env:
-          SIGNING_CERT_BASE64: ${{ secrets.CODE_SIGNING_CERT }}
-          SIGNING_PASS: ${{ secrets.CODE_SIGNING_PASS }}
         run: |
+          $signtool = (Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Select-Object -Last 1).FullName
+          if (-not $signtool) { throw "signtool.exe not found" }
           [System.IO.File]::WriteAllBytes("cert.pfx", [System.Convert]::FromBase64String($env:SIGNING_CERT_BASE64))
-          & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe" sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f cert.pfx /p $env:SIGNING_PASS WinTime.exe
+          
+          Write-Host "Signing WinTime.exe..."
+          & $signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f cert.pfx /p $env:SIGNING_PASS WinTime.exe
+          
+          Write-Host "Signing PowerShell scripts..."
+          $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2("cert.pfx", $env:SIGNING_PASS)
+          Set-AuthenticodeSignature -FilePath "WinTime.ps1" -Certificate $cert -TimestampServer "http://timestamp.digicert.com" -HashAlgorithm SHA256
+          Set-AuthenticodeSignature -FilePath "install.ps1" -Certificate $cert -TimestampServer "http://timestamp.digicert.com" -HashAlgorithm SHA256
+          
           Remove-Item cert.pfx -Force
+
+      - name: Generate Checksums (SHA256SUMS.txt)
+        run: |
+          $files = @("WinTime.exe", "WinTime.ps1", "WinTime.bat", "install.ps1")
+          $lines = @()
+          foreach ($f in $files) {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $f).Hash.ToLowerInvariant()
+            $lines += "$hash  $f"
+          }
+          $sumsContent = ($lines -join "`n") + "`n"
+          [System.IO.File]::WriteAllText("SHA256SUMS.txt", $sumsContent, (New-Object System.Text.UTF8Encoding $false))
+          Get-Content "SHA256SUMS.txt"
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
@@ -42,11 +121,100 @@ jobs:
           path: |
             WinTime.exe
             WinTime.ps1
+            WinTime.bat
+            install.ps1
+            SHA256SUMS.txt
+
+  verify-integrity:
+    name: Verify Package Integrity & Checksums
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: WinTime-Package
+          path: package/
+
+      - name: Verify Checksums Match Exact Artifact Bytes
+        run: |
+          cd package
+          if (-not (Test-Path "SHA256SUMS.txt")) {
+            throw "SHA256SUMS.txt not found in build artifacts"
+          }
+          $checksums = @{}
+          Get-Content "SHA256SUMS.txt" | ForEach-Object {
+            if ($_ -match '^\s*([a-fA-F0-9]{64})\s+\*?(.+?)\s*$') {
+              $checksums[$matches[2].Trim()] = $matches[1].Trim()
+            }
+          }
+          $files = @("WinTime.exe", "WinTime.ps1", "WinTime.bat", "install.ps1")
+          foreach ($f in $files) {
+            if (-not (Test-Path $f)) {
+              throw "Artifact $f missing from package"
+            }
+            if (-not $checksums.ContainsKey($f)) {
+              throw "No checksum found for $f in SHA256SUMS.txt"
+            }
+            $actual = (Get-FileHash -Algorithm SHA256 $f).Hash.ToLowerInvariant()
+            $expected = $checksums[$f].ToLowerInvariant()
+            if ($actual -ne $expected) {
+              throw "Integrity verification failed for $f! Expected: $expected, Actual: $actual"
+            }
+            Write-Host "Verified $f ($actual) [OK]"
+          }
+
+      - name: Checkout Source for Raw-Serving Byte Verification
+        uses: actions/checkout@v4
+
+      - name: Verify Raw Serving Bytes Against Repository
+        run: |
+          if ($env:GITHUB_EVENT_NAME -eq 'push') {
+            $repo = $env:GITHUB_REPOSITORY
+            $sha = $env:GITHUB_SHA
+            $filesToCheck = @("WinTime.ps1", "WinTime.bat", "install.ps1")
+            foreach ($f in $filesToCheck) {
+              $rawUrl = "https://raw.githubusercontent.com/$repo/$sha/$f"
+              Write-Host "Verifying raw serving bytes for $f from $rawUrl ..."
+              try {
+                $webClient = New-Object System.Net.WebClient
+                $servedBytes = $webClient.DownloadData($rawUrl)
+                $localBytes = [System.IO.File]::ReadAllBytes($f)
+                $servedHash = (Get-FileHash -InputStream ([System.IO.MemoryStream]::new($servedBytes)) -Algorithm SHA256).Hash.ToLowerInvariant()
+                $localHash = (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash.ToLowerInvariant()
+                if ($servedHash -ne $localHash) {
+                  throw "Raw-serving divergence for $f! URL: $rawUrl`nExpected local: $localHash`nActual served:  $servedHash"
+                }
+                Write-Host "  -> $f matches raw serving bytes ($servedHash) [OK]"
+              } catch {
+                Write-Host "  [!] Notice: Could not query raw endpoint: $($_.Exception.Message)" -ForegroundColor Yellow
+              }
+            }
+          }
+
+  publish:
+    name: Publish Release Assets to GitHub Release
+    needs: verify-integrity
+    runs-on: windows-latest
+    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: WinTime-Package
+          path: package/
 
       - name: Upload to GitHub Release
-        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          prerelease: true
+          generate_release_notes: true
           files: |
-            WinTime.exe
-            WinTime.ps1
+            package/WinTime.exe
+            package/WinTime.ps1
+            package/WinTime.bat
+            package/install.ps1
+            package/SHA256SUMS.txt

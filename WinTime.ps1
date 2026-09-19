@@ -1,18 +1,78 @@
 # WinTime CLI Engine (PowerShell)
 # Lightweight Windows Time & NTP Management CLI
 
-# ---- Self-Elevation (Administrator Check) ----
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {
-    Write-Host "  [*] Requesting Administrator privileges..." -ForegroundColor Yellow
-    $scriptPath = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Definition }
-    if ($scriptPath -and (Test-Path $scriptPath)) {
-        Start-Process powershell.exe -ArgumentList "-NoProfile -File `"$scriptPath`"" -Verb RunAs
-    }
-    exit
-}
+try {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $ErrorActionPreference = 'Stop'
 
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    # Defensive MOTW self-heal:
+    # Note: This only helps environments that already loaded the script into memory (e.g. Unrestricted or Bypass hosts).
+    # It cannot rescue an initial RemoteSigned load refusal (RC-1) where execution was blocked before reaching line 1.
+    # That must be handled externally by WinTime.bat, install.ps1, or manual unblocking.
+    if ($PSCommandPath -and (Test-Path -LiteralPath $PSCommandPath)) {
+        try {
+            $hasZone = Get-Item -LiteralPath $PSCommandPath -Stream Zone.Identifier -ErrorAction SilentlyContinue
+            if ($hasZone) {
+                Unblock-File -LiteralPath $PSCommandPath -ErrorAction SilentlyContinue
+            }
+        } catch {}
+    }
+
+    # ---- Self-Elevation (Administrator Check) ----
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $isAdmin) {
+        Write-Host "  [*] Requesting Administrator privileges..." -ForegroundColor Yellow
+        $scriptPath = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Definition }
+        $origDir = (Get-Location).Path
+        if ($scriptPath -and (Test-Path -LiteralPath $scriptPath)) {
+            $forwardArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$scriptPath`"")
+            if ($args -and $args.Count -gt 0) {
+                foreach ($a in $args) {
+                    if ($a -match '\s') { $forwardArgs += "`"$a`"" } else { $forwardArgs += "$a" }
+                }
+            }
+            $argString = $forwardArgs -join " "
+            try {
+                Start-Process powershell.exe -ArgumentList $argString -WorkingDirectory $origDir -Verb RunAs -ErrorAction Stop
+                exit 0
+            } catch [System.ComponentModel.Win32Exception] {
+                if ($_.Exception.NativeErrorCode -eq 1223) {
+                    Write-Host ""
+                    Write-Host "  [!] Elevation was declined by user (UAC prompt canceled)." -ForegroundColor Yellow
+                    Write-Host "      WinTime requires Administrator privileges to configure time and services." -ForegroundColor Yellow
+                    Write-Host ""
+                    Write-Host "  Press Enter to exit..." -ForegroundColor Gray
+                    try { [void][Console]::ReadLine() } catch { Start-Sleep -Seconds 5 }
+                    exit 1
+                }
+                throw $_
+            } catch {
+                if ($_.Exception.Message -match "canceled by the user" -or ($_.Exception.InnerException -and $_.Exception.InnerException.Message -match "canceled by the user")) {
+                    Write-Host ""
+                    Write-Host "  [!] Elevation was declined by user (UAC prompt canceled)." -ForegroundColor Yellow
+                    Write-Host "      WinTime requires Administrator privileges to configure time and services." -ForegroundColor Yellow
+                    Write-Host ""
+                    Write-Host "  Press Enter to exit..." -ForegroundColor Gray
+                    try { [void][Console]::ReadLine() } catch { Start-Sleep -Seconds 5 }
+                    exit 1
+                }
+                throw $_
+            }
+        } else {
+            Write-Host ""
+            Write-Host "  [X] ERROR: Administrator privileges are required, but the script path could not be resolved." -ForegroundColor Red
+            Write-Host "      This happens when executing via pipeline (irm ... | iex), pasted into console, or in PowerShell ISE." -ForegroundColor Red
+            Write-Host ""
+            Write-Host "      Please run WinTime from a saved file with Administrator privileges:" -ForegroundColor Yellow
+            Write-Host "        1. Double-click WinTime.bat (recommended), OR" -ForegroundColor Cyan
+            Write-Host "        2. Right-click WinTime.ps1 -> 'Run with PowerShell', OR" -ForegroundColor Cyan
+            Write-Host "        3. Open PowerShell as Administrator, then execute: .\WinTime.ps1" -ForegroundColor Cyan
+            Write-Host ""
+            Write-Host "  Press Enter to exit..." -ForegroundColor Gray
+            try { [void][Console]::ReadLine() } catch { Start-Sleep -Seconds 5 }
+            exit 1
+        }
+    }
 
 function Get-ConfiguredPeers {
     $list = @()
@@ -36,22 +96,137 @@ function Get-ConfiguredPeers {
     return $list
 }
 
-function Set-ConfiguredPeers($peerObjects) {
+function Set-ConfiguredPeers {
+    param(
+        $peerObjects,
+        [switch]$AllowDomainOverride
+    )
     if (-not $peerObjects -or $peerObjects.Count -eq 0) {
-        Write-Host "  [X] Error: Peer list cannot be empty. Windows requires at least one peer." -ForegroundColor Red
+        Write-Host "  [X] Error: Peer list cannot be empty. Windows Time service requires at least one peer." -ForegroundColor Red
         return $false
     }
+
+    # Domain join check - parity with GUI / TimeServiceManager
+    $isDomainJoined = $false
+    $domainName = ""
+    try {
+        $comp = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+        if ($comp -and $comp.PartOfDomain) {
+            $isDomainJoined = $true
+            $domainName = $comp.Domain
+        }
+    } catch {}
+
+    if ($isDomainJoined -and -not $AllowDomainOverride) {
+        Write-Host ""
+        Write-Host "  ================================================================" -ForegroundColor Red
+        Write-Host "  [X] DOMAIN-JOINED PROTECTION ACTIVE" -ForegroundColor Red
+        Write-Host "  ================================================================" -ForegroundColor Red
+        Write-Host "  This machine is joined to Active Directory domain '$domainName'." -ForegroundColor Yellow
+        Write-Host "  Overriding manual NTP peers might disrupt enterprise domain Kerberos" -ForegroundColor Yellow
+        Write-Host "  authentication and time hierarchy." -ForegroundColor Yellow
+        Write-Host ""
+        if ([Environment]::UserInteractive) {
+            Write-Host "  Do you want to override and apply manual NTP peers anyway? (y/N): " -ForegroundColor Cyan -NoNewline
+            $ans = (Read-Host).Trim()
+            if ($ans -ne "y" -and $ans -ne "Y") {
+                Write-Host "  [*] Operation aborted by user. Domain time settings preserved." -ForegroundColor DarkGray
+                return $false
+            }
+            Write-Host "  [!] Domain override accepted by administrator." -ForegroundColor Yellow
+        } else {
+            Write-Host "  [X] Blocked: Reconfiguration rejected on domain-joined machine." -ForegroundColor Red
+            Write-Host "      Use -AllowDomainOverride to bypass." -ForegroundColor Red
+            return $false
+        }
+    }
+
     $valStr = ($peerObjects | ForEach-Object { "$($_.Host),$($_.Flag)" }) -join " "
     try {
-        # Use official Microsoft w32tm administrative tool instead of direct registry manipulation
-        $null = w32tm /config /manualpeerlist:"$valStr" /syncfromflags:manual /reliable:yes /update 2>&1
-        $null = sc.exe config w32time start= auto 2>&1
+        # Never specify /reliable:yes on client workstations (only for authoritative DCs)
+        $w32Out = w32tm /config /manualpeerlist:"$valStr" /syncfromflags:manual /update 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0 -and -not ($w32Out -match "command completed successfully")) {
+            Write-Host "  [X] Error configuring peers via w32tm (Exit code $LASTEXITCODE): $($w32Out.Trim())" -ForegroundColor Red
+            return $false
+        }
+        $scOut = sc.exe config w32time start= auto 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  [!] Warning configuring service start: $($scOut.Trim())" -ForegroundColor DarkGray
+        }
         Restart-Service w32time -Force -ErrorAction SilentlyContinue
         return $true
     } catch {
         Write-Host "  [X] Error updating Windows Time Service: $($_.Exception.Message)" -ForegroundColor Red
         return $false
     }
+}
+
+function Test-PeerAddress($raw) {
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return @{ IsValid = $false; Error = "Server address cannot be empty." }
+    }
+    $str = $raw.Trim()
+
+    # Reject non-ASCII characters
+    foreach ($ch in $str.ToCharArray()) {
+        if ([int]$ch -gt 127) {
+            return @{ IsValid = $false; Error = "Non-ASCII characters (Persian/Arabic) are not allowed." }
+        }
+    }
+
+    # IPv4 Check
+    $ip = $null
+    if ([System.Net.IPAddress]::TryParse($str, [ref]$ip)) {
+        $ipStr = $ip.ToString()
+        if ($ip.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork) {
+            $bytes = $ip.GetAddressBytes()
+            if ($bytes[0] -eq 127) { return @{ IsValid = $false; Error = "Loopback address ($ipStr) cannot be used as NTP peer." } }
+            if ($bytes[0] -eq 0) { return @{ IsValid = $false; Error = "Unspecified address ($ipStr) cannot be used as NTP peer." } }
+            if ($bytes[0] -ge 224 -and $bytes[0] -le 239) { return @{ IsValid = $false; Error = "Multicast address ($ipStr) cannot be used as NTP peer." } }
+            if ($ipStr -eq "255.255.255.255") { return @{ IsValid = $false; Error = "Broadcast address cannot be used as NTP peer." } }
+            return @{ IsValid = $true; CleanHost = $ipStr }
+        }
+        if ($ip.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetworkV6) {
+            if ($ip.IsIPv6Multicast) { return @{ IsValid = $false; Error = "IPv6 multicast address ($ipStr) cannot be used as NTP peer." } }
+            if ($ipStr -eq "::1" -or $ipStr -eq "0:0:0:0:0:0:0:1") { return @{ IsValid = $false; Error = "IPv6 loopback address ($ipStr) cannot be used as NTP peer." } }
+            if ($ipStr -eq "::") { return @{ IsValid = $false; Error = "IPv6 unspecified address cannot be used as NTP peer." } }
+            return @{ IsValid = $true; CleanHost = $ipStr }
+        }
+    }
+
+    # Hostname validation
+    if ($str -match "^localhost$" -or $str -match "\.localhost$") {
+        return @{ IsValid = $false; Error = "Localhost domain cannot be used as NTP peer." }
+    }
+
+    if ($str.Length -gt 253) {
+        return @{ IsValid = $false; Error = "Hostname exceeds maximum length of 253 characters." }
+    }
+
+    $labels = $str.Split('.')
+    if ($labels.Length -lt 2) {
+        return @{ IsValid = $false; Error = "Hostname must be a fully qualified domain name with at least one dot (e.g. pool.ntp.org)." }
+    }
+
+    foreach ($lbl in $labels) {
+        if ($lbl.Length -lt 1 -or $lbl.Length -gt 63) {
+            return @{ IsValid = $false; Error = "Domain label length must be between 1 and 63 characters." }
+        }
+        if ($lbl.StartsWith("-") -or $lbl.EndsWith("-")) {
+            return @{ IsValid = $false; Error = "Domain label cannot start or end with a hyphen ('$lbl')." }
+        }
+        if (-not ($lbl -match "^[a-zA-Z0-9\-]+$")) {
+            return @{ IsValid = $false; Error = "Domain label contains invalid characters ('$lbl')." }
+        }
+    }
+
+    # TLD cannot be purely numeric
+    $tld = $labels[$labels.Length - 1]
+    if ($tld -match "^\d+$") {
+        return @{ IsValid = $false; Error = "Top-level domain cannot be purely numeric ('$tld')." }
+    }
+
+    return @{ IsValid = $true; CleanHost = $str.ToLowerInvariant() }
 }
 
 function Show-Header {
@@ -64,7 +239,7 @@ function Show-Header {
 
     Write-Host ""
     Write-Host "  ================================================================" -ForegroundColor Cyan
-    Write-Host "         WINTIME v0.1.0 (ALPHA) - WINDOWS TIME & NTP MANAGER" -ForegroundColor Yellow
+    Write-Host "         WINTIME v0.1.3 (ALPHA) - WINDOWS TIME & NTP MANAGER" -ForegroundColor Yellow
     Write-Host "  ================================================================" -ForegroundColor Cyan
     Write-Host "   Current Time: " -ForegroundColor Gray -NoNewline
     Write-Host "$now" -ForegroundColor Yellow
@@ -76,46 +251,225 @@ function Show-Header {
     Write-Host ""
 }
 
-function Get-NtpTimeFromHost($hostName) {
+function ConvertTo-NtpTimestamp([datetime]$utcDate) {
+    # RFC 4330 Era-inference heuristic:
+    # 2036-02-07 06:28:16 UTC marks the boundary between Era 0 and Era 1.
+    $era1Base = [datetime]::SpecifyKind([datetime]"2036-02-07 06:28:16", [System.DateTimeKind]::Utc)
+    $epoch = [datetime]::SpecifyKind([datetime]"1900-01-01 00:00:00", [System.DateTimeKind]::Utc)
+    $baseEpoch = if ($utcDate -ge $era1Base) { $era1Base } else { $epoch }
+    $span = $utcDate - $baseEpoch
+    $sec = [uint32]$span.TotalSeconds
+    $frac = [uint32](($span.TotalSeconds - [math]::Floor($span.TotalSeconds)) * 4294967296.0)
+    return @($sec, $frac)
+}
+
+function ConvertFrom-NtpTimestamp([byte[]]$bytes, [int]$offset) {
+    $sec = [uint32](([uint32]$bytes[$offset] -shl 24) -bor ([uint32]$bytes[$offset + 1] -shl 16) -bor ([uint32]$bytes[$offset + 2] -shl 8) -bor [uint32]$bytes[$offset + 3])
+    $frac = [uint32](([uint32]$bytes[$offset + 4] -shl 24) -bor ([uint32]$bytes[$offset + 5] -shl 16) -bor ([uint32]$bytes[$offset + 6] -shl 8) -bor [uint32]$bytes[$offset + 7])
+    if ($sec -eq 0 -and $frac -eq 0) { return $null }
+
+    # RFC 4330 Section 3: Era-inference heuristic for NTP rollover (2036-02-07 06:28:16 UTC)
+    # Timestamps with the high bit set (sec >= 0x80000000) belong to Era 0 (1968 - 2036).
+    # Timestamps with the high bit clear (sec < 0x80000000) belong to Era 1 (2036 - 2172).
+    $baseEpoch = if ($sec -lt 2147483648L) {
+        [datetime]::SpecifyKind([datetime]"2036-02-07 06:28:16", [System.DateTimeKind]::Utc)
+    } else {
+        [datetime]::SpecifyKind([datetime]"1900-01-01 00:00:00", [System.DateTimeKind]::Utc)
+    }
+    $ms = ($frac * 1000.0) / 4294967296.0
+    return $baseEpoch.AddSeconds($sec).AddMilliseconds($ms)
+}
+
+function Get-NtpTimeFromHost($hostName, $timeoutMs = 2500) {
+    $client = $null
     try {
         $client = New-Object System.Net.Sockets.UdpClient
-        $client.Client.ReceiveTimeout = 2500
+        $client.Client.ReceiveTimeout = $timeoutMs
+        $client.Client.SendTimeout = $timeoutMs
         $client.Connect($hostName, 123)
-        $data = New-Object byte[] 48
-        $data[0] = 0x1B # NTP v3 Client
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        [void]$client.Send($data, $data.Length)
+
+        $packet = New-Object byte[] 48
+        # LI = 0, VN = 4, Mode = 3 (Client) -> 0x23
+        $packet[0] = 0x23
+
+        # Transmit timestamp (t1)
+        $t1 = [datetime]::UtcNow
+        $t1Parts = ConvertTo-NtpTimestamp $t1
+        $secBytes = [System.BitConverter]::GetBytes([uint32]$t1Parts[0])
+        $fracBytes = [System.BitConverter]::GetBytes([uint32]$t1Parts[1])
+        if ([System.BitConverter]::IsLittleEndian) {
+            [System.Array]::Reverse($secBytes)
+            [System.Array]::Reverse($fracBytes)
+        }
+        [System.Array]::Copy($secBytes, 0, $packet, 40, 4)
+        [System.Array]::Copy($fracBytes, 0, $packet, 44, 4)
+
+        [void]$client.Send($packet, $packet.Length)
         $endpoint = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
         $resp = $client.Receive([ref]$endpoint)
-        $sw.Stop()
-        $client.Close()
-        if ($resp.Length -ge 48) {
-            $intPart = [uint32](([uint32]$resp[40] -shl 24) -bor ([uint32]$resp[41] -shl 16) -bor ([uint32]$resp[42] -shl 8) -bor [uint32]$resp[43])
-            $epoch = [datetime]::SpecifyKind([datetime]"1900-01-01 00:00:00", [System.DateTimeKind]::Utc)
-            $utc = $epoch.AddSeconds($intPart)
-            return @{ Success = $true; Host = $hostName; UtcTime = $utc; LatencyMs = $sw.ElapsedMilliseconds }
+        $t4 = [datetime]::UtcNow
+
+        if ($resp.Length -lt 48) {
+            return @{ Success = $false; Host = $hostName; Error = "Malformed packet (length < 48 bytes)" }
         }
-    } catch {}
-    return @{ Success = $false; Host = $hostName; Error = "Timeout or Unreachable" }
+
+        # Header fields validation
+        $li = ($resp[0] -band 0xC0) -shr 6
+        $vn = ($resp[0] -band 0x38) -shr 3
+        $mode = $resp[0] -band 0x07
+        $stratum = [int]$resp[1]
+
+        if ($li -eq 3) {
+            return @{ Success = $false; Host = $hostName; Error = "Server unsynchronized (Alarm condition LI=3)" }
+        }
+        if ($vn -lt 3 -or $vn -gt 4) {
+            return @{ Success = $false; Host = $hostName; Error = "Invalid NTP version ($vn)" }
+        }
+        if ($mode -ne 4 -and $mode -ne 5) {
+            return @{ Success = $false; Host = $hostName; Error = "Invalid response mode ($mode)" }
+        }
+        if ($stratum -eq 0) {
+            $kod = [System.Text.Encoding]::ASCII.GetString($resp, 12, 4)
+            return @{ Success = $false; Host = $hostName; Error = "Kiss-o'-Death received ($kod)" }
+        }
+        if ($stratum -gt 15) {
+            return @{ Success = $false; Host = $hostName; Error = "Server unsynchronized (Stratum $stratum)" }
+        }
+
+        # Nonce / Origin timestamp verification (bytes 24..31 must match packet bytes 40..47)
+        for ($i = 0; $i -lt 8; $i++) {
+            if ($resp[24 + $i] -ne $packet[40 + $i]) {
+                return @{ Success = $false; Host = $hostName; Error = "Origin timestamp mismatch (possible spoofing)" }
+            }
+        }
+
+        $t2 = ConvertFrom-NtpTimestamp $resp 32 # Receive timestamp
+        $t3 = ConvertFrom-NtpTimestamp $resp 40 # Transmit timestamp
+
+        if ($null -eq $t2 -or $null -eq $t3) {
+            return @{ Success = $false; Host = $hostName; Error = "Server returned zero timestamp" }
+        }
+
+        # Standard RFC 4330 4-timestamp calculation:
+        # Delay = (t4 - t1) - (t3 - t2)
+        # Offset = ((t2 - t1) + (t3 - t4)) / 2
+        $delayMs = (($t4 - $t1).TotalMilliseconds) - (($t3 - $t2).TotalMilliseconds)
+        if ($delayMs -lt 0) { $delayMs = 0 }
+        $offsetMs = ((($t2 - $t1).TotalMilliseconds) + (($t3 - $t4).TotalMilliseconds)) / 2.0
+
+        $targetUtc = $t4.AddMilliseconds($offsetMs)
+
+        return @{
+            Success = $true
+            Host = $hostName
+            ResolvedIp = $endpoint.Address.ToString()
+            UtcTime = $targetUtc
+            OffsetMs = $offsetMs
+            LatencyMs = [math]::Round($delayMs, 1)
+            Stratum = $stratum
+        }
+    } catch {
+        return @{ Success = $false; Host = $hostName; Error = $_.Exception.Message }
+    } finally {
+        if ($client) { $client.Close() }
+    }
+}
+
+function ConvertFrom-HttpDateHeader([string]$value) {
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return $null
+    }
+    [string[]]$formats = @(
+        "ddd, dd MMM yyyy HH:mm:ss 'GMT'",
+        "ddd, dd MMM yyyy HH:mm:ss GMT",
+        "dddd, dd-MMM-yy HH:mm:ss 'GMT'",
+        "dddd, dd-MMM-yy HH:mm:ss GMT",
+        "ddd MMM d HH:mm:ss yyyy",
+        "ddd MMM  d HH:mm:ss yyyy",
+        "ddd MMM dd HH:mm:ss yyyy",
+        "r"
+    )
+    $utc = [datetime]::MinValue
+    $trimmed = $value.Trim()
+    $parsed = [datetime]::TryParseExact($trimmed, $formats, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal, [ref]$utc)
+    if (-not $parsed) {
+        $parsed = [datetime]::TryParse($trimmed, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal, [ref]$utc)
+    }
+    if ($parsed) {
+        return $utc.ToUniversalTime()
+    }
+    return $null
 }
 
 function Get-HttpsTimeFromHost($url, $name) {
+    # Explicit TLS enforcement: TLS 1.2 and TLS 1.3
     try {
-        $req = [System.Net.HttpWebRequest]::Create($url)
-        $req.Timeout = 4000
-        $req.Method = "HEAD"
-        $req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        $res = $req.GetResponse()
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+    } catch {
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        } catch {}
+    }
+
+    $httpDate = $null
+    $latencyMs = 0
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
+    # Strategy 1: Prefer System.Net.Http.HttpClient when available
+    $usedClient = $false
+    try {
+        $handler = New-Object System.Net.Http.HttpClientHandler
+        $client = New-Object System.Net.Http.HttpClient($handler)
+        $client.Timeout = [TimeSpan]::FromSeconds(4)
+        $client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64; WinTime)")
+        $reqMsg = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Head, $url)
+        $respTask = $client.SendAsync($reqMsg, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead)
+        $response = $respTask.GetAwaiter().GetResult()
         $sw.Stop()
-        $httpDate = $res.Headers["Date"]
-        $res.Close()
-        if ($httpDate) {
-            $utc = [datetime]::ParseExact($httpDate, "ddd, dd MMM yyyy HH:mm:ss GMT", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal)
-            return @{ Success = $true; Host = $name; UtcTime = $utc; LatencyMs = $sw.ElapsedMilliseconds }
+        $latencyMs = $sw.ElapsedMilliseconds
+        if ($response.Headers.Date) {
+            $httpDate = $response.Headers.Date.ToString()
+        } elseif ($response.Content -and $response.Content.Headers.LastModified) {
+            $httpDate = $response.Content.Headers.LastModified.ToString()
         }
+        $response.Dispose()
+        $client.Dispose()
+        $usedClient = $true
     } catch {}
-    return @{ Success = $false; Host = $name; Error = "Failed to connect" }
+
+    # Strategy 2: Graceful fallback for Windows PowerShell 5.1 / HttpWebRequest
+    if (-not $usedClient -or [string]::IsNullOrWhiteSpace($httpDate)) {
+        try {
+            $sw.Restart()
+            $req = [System.Net.HttpWebRequest]::Create($url)
+            $req.Timeout = 4000
+            $req.Method = "HEAD"
+            $req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; WinTime)"
+            $res = $req.GetResponse()
+            $sw.Stop()
+            $latencyMs = $sw.ElapsedMilliseconds
+            $httpDate = $res.Headers["Date"]
+            $res.Close()
+        } catch [System.Net.WebException] {
+            if ($_.Exception.Status -eq [System.Net.WebExceptionStatus]::TrustFailure) {
+                return @{ Success = $false; Host = $name; Error = "TLS Certificate trust failure (local clock may be severely skewed, e.g. RDR2 2019 preset)" }
+            }
+            return @{ Success = $false; Host = $name; Error = $_.Exception.Message }
+        } catch {
+            return @{ Success = $false; Host = $name; Error = $_.Exception.Message }
+        }
+    }
+
+    if ($httpDate) {
+        $parsedUtc = ConvertFrom-HttpDateHeader $httpDate
+        if ($parsedUtc) {
+            return @{ Success = $true; Host = $name; UtcTime = $parsedUtc; LatencyMs = $latencyMs }
+        } else {
+            return @{ Success = $false; Host = $name; Error = "Failed to parse HTTP Date format: $httpDate" }
+        }
+    }
+
+    return @{ Success = $false; Host = $name; Error = "No Date header returned from $url" }
 }
 
 function Sync-SystemPeers {
@@ -145,33 +499,38 @@ function Sync-SystemPeers {
     Write-Host "  [*] Executing: w32tm /resync /force ..." -ForegroundColor Gray
     $resyncOut = w32tm /resync /force 2>&1 | Out-String
 
-    if ($resyncOut -match "command completed successfully" -or $LASTEXITCODE -eq 0) {
-        Write-Host "  [OK] Successfully synchronized via Windows Time service!" -ForegroundColor Green
+    if ($LASTEXITCODE -eq 0 -and $resyncOut -match "command completed successfully") {
+        Write-Host "  [OK] Successfully synchronized via Windows Time service (w32tm)!" -ForegroundColor Green
     } else {
-        Write-Host "  [!] w32tm resync did not succeed." -ForegroundColor Yellow
+        Write-Host "  [!] w32tm resync returned failure or notice." -ForegroundColor Yellow
         Write-Host "      Details: $($resyncOut.Trim())" -ForegroundColor DarkGray
         Write-Host ""
-        Write-Host "  [*] Querying configured peers directly via NTP..." -ForegroundColor Gray
+        Write-Host "  [*] Querying configured registry peers directly via SNTP..." -ForegroundColor Gray
         
-        $synced = $false
+        $results = @()
         foreach ($p in $peers) {
             Write-Host "    Querying $($p.Host) ... " -NoNewline -ForegroundColor Gray
             $res = Get-NtpTimeFromHost $p.Host
             if ($res.Success) {
-                Write-Host "OK ($($res.LatencyMs)ms)" -ForegroundColor Green
-                try {
-                    $null = Set-Date -Date ($res.UtcTime.ToLocalTime()) 2>&1
-                    Write-Host "  [OK] Clock successfully updated from peer: $($p.Host)" -ForegroundColor Green
-                    $synced = $true
-                    break
-                } catch {
-                    Write-Host "  [X] Failed to set date: $($_.Exception.Message)" -ForegroundColor Red
-                }
+                Write-Host "OK (Delay: $($res.LatencyMs)ms, Offset: $([math]::Round($res.OffsetMs, 1))ms, Stratum: $($res.Stratum))" -ForegroundColor Green
+                $results += $res
             } else {
-                Write-Host "Unreachable" -ForegroundColor DarkRed
+                Write-Host "Unreachable ($($res.Error))" -ForegroundColor DarkRed
             }
         }
-        if (-not $synced) {
+
+        if ($results.Count -gt 0) {
+            $sorted = $results | Sort-Object { $_.OffsetMs }
+            $median = $sorted[[math]::Floor($sorted.Count / 2)]
+            Write-Host ""
+            Write-Host "  [*] Applying median offset ($([math]::Round($median.OffsetMs, 1))ms) from $($results.Count) responsive peer(s)..." -ForegroundColor Cyan
+            try {
+                Set-Date -Date ($median.UtcTime.ToLocalTime()) -ErrorAction Stop
+                Write-Host "  [OK] System clock successfully synchronized from configured peers!" -ForegroundColor Green
+            } catch {
+                Write-Host "  [X] Failed to set system date: $($_.Exception.Message)" -ForegroundColor Red
+            }
+        } else {
             Write-Host "  [X] None of the system peers responded via NTP (UDP port 123 may be blocked)." -ForegroundColor Red
         }
     }
@@ -182,7 +541,7 @@ function Sync-SystemPeers {
 }
 
 function Sync-GlobalTime {
-    Write-Host "  [*] Synchronizing with Global International NTP (No Iranian Servers)..." -ForegroundColor Cyan
+    Write-Host "  [*] Synchronizing with Global International NTP Consensus..." -ForegroundColor Cyan
     Write-Host ""
 
     $globalNtp = @(
@@ -193,31 +552,43 @@ function Sync-GlobalTime {
         "time.aws.com"
     )
 
-    $synced = $false
-
-    # Query Tier-1 Global NTP
+    $results = @()
     foreach ($srv in $globalNtp) {
         Write-Host "  [*] Querying NTP: $srv ... " -NoNewline -ForegroundColor Gray
         $res = Get-NtpTimeFromHost $srv
         if ($res.Success) {
-            Write-Host "OK ($($res.LatencyMs)ms)" -ForegroundColor Green
-            try {
-                $null = Set-Date -Date ($res.UtcTime.ToLocalTime()) 2>&1
-                Write-Host "  [OK] Successfully synchronized from: $srv (Tier-1 NTP)" -ForegroundColor Green
-                $synced = $true
-                break
-            } catch {
-                Write-Host "  [X] Error applying system date: $($_.Exception.Message)" -ForegroundColor Red
-            }
+            Write-Host "OK (Delay: $($res.LatencyMs)ms, Offset: $([math]::Round($res.OffsetMs, 1))ms, Stratum: $($res.Stratum))" -ForegroundColor Green
+            $results += $res
         } else {
-            Write-Host "Unreachable" -ForegroundColor DarkGray
+            Write-Host "Failed ($($res.Error))" -ForegroundColor DarkGray
         }
     }
 
-    # Fallback to HTTPS Atomic Time (port 443 - never blocked by firewall/ISP)
+    $synced = $false
+    if ($results.Count -gt 0) {
+        $sorted = $results | Sort-Object { $_.OffsetMs }
+        $medianRes = $sorted[[math]::Floor($sorted.Count / 2)]
+
+        # Outlier rejection (> 5000ms deviation from median)
+        $validSources = $sorted | Where-Object { [math]::Abs($_.OffsetMs - $medianRes.OffsetMs) -le 5000 }
+        
+        Write-Host ""
+        Write-Host "  [*] Applying consensus time from $($validSources.Count)/$($results.Count) responsive servers (Median Offset: $([math]::Round($medianRes.OffsetMs, 1))ms)..." -ForegroundColor Cyan
+
+        try {
+            $targetLocal = $medianRes.UtcTime.ToLocalTime()
+            Set-Date -Date $targetLocal -ErrorAction Stop
+            Write-Host "  [OK] Successfully synchronized clock from Global NTP consensus!" -ForegroundColor Green
+            $synced = $true
+        } catch {
+            Write-Host "  [X] Error applying system date: $($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
+
+    # Fallback to HTTPS Date header (port 443)
     if (-not $synced) {
         Write-Host ""
-        Write-Host "  [!] UDP NTP packets timed out. Trying Secure HTTPS Global Time (Port 443)..." -ForegroundColor Yellow
+        Write-Host "  [!] UDP NTP packets timed out or blocked. Trying Secure HTTPS Date header (Port 443, ~1s precision)..." -ForegroundColor Yellow
         $httpTargets = @(
             @{ Url = "https://www.google.com"; Name = "Google HTTPS (Global)" },
             @{ Url = "https://cloudflare.com"; Name = "Cloudflare HTTPS (Global)" },
@@ -230,21 +601,21 @@ function Sync-GlobalTime {
             if ($res.Success) {
                 Write-Host "OK ($($res.LatencyMs)ms)" -ForegroundColor Green
                 try {
-                    $null = Set-Date -Date ($res.UtcTime.ToLocalTime()) 2>&1
-                    Write-Host "  [OK] Successfully synchronized from: $($tgt.Name)" -ForegroundColor Green
+                    Set-Date -Date ($res.UtcTime.ToLocalTime()) -ErrorAction Stop
+                    Write-Host "  [OK] Successfully synchronized from: $($tgt.Name) (coarse 1-second precision)" -ForegroundColor Green
                     $synced = $true
                     break
                 } catch {
                     Write-Host "  [X] Error applying system date: $($_.Exception.Message)" -ForegroundColor Red
                 }
             } else {
-                Write-Host "Failed" -ForegroundColor DarkGray
+                Write-Host "Failed ($($res.Error))" -ForegroundColor DarkGray
             }
         }
     }
 
     if (-not $synced) {
-        Write-Host "  [X] Failed to connect to any international servers. Check your internet connection." -ForegroundColor Red
+        Write-Host "  [X] Failed to connect to any international servers. Check your internet connection and firewall." -ForegroundColor Red
     }
 
     Write-Host ""
@@ -311,20 +682,37 @@ function Set-CustomTime {
 
     $targetStr = "$y-$m-$d $h`:$min`:00"
     Write-Host ""
-    Write-Host "  Applying: $targetStr ..." -ForegroundColor Gray
 
-    $done = $false
+    $parsed = $null
     try {
         $parsed = [datetime]::Parse($targetStr)
-        Set-Date -Date $parsed -ErrorAction Stop
-        $done = $true
     } catch {
-        $done = $false
+        Write-Host "  [X] Invalid date format: $targetStr" -ForegroundColor Red
+        return
     }
-    if ($done) {
-        Write-Host "  [OK] System date and time successfully updated!" -ForegroundColor Green
-    } else {
-        Write-Host "  [X] Failed to set time. Ensure script is running with Administrator privileges." -ForegroundColor Red
+
+    if ([math]::Abs(($parsed - (Get-Date)).TotalHours) -gt 24) {
+        Write-Host "  [!] WARNING: Target date/time is more than 24 hours away from current time." -ForegroundColor Yellow
+        Write-Host "      Large clock adjustments will disrupt TLS/SSL certificates and active logins." -ForegroundColor Yellow
+        Write-Host "  Continue with adjustment? (y/N): " -NoNewline -ForegroundColor White
+        $c = Read-Host
+        if ($c -ne "y" -and $c -ne "Y") {
+            Write-Host "  Operation canceled." -ForegroundColor DarkGray
+            return
+        }
+    }
+
+    Write-Host "  Applying: $targetStr ..." -ForegroundColor Gray
+    try {
+        Set-Date -Date $parsed -ErrorAction Stop
+        $verified = Get-Date
+        if ([math]::Abs(($verified - $parsed).TotalSeconds) -lt 10) {
+            Write-Host "  [OK] System date and time successfully updated and verified!" -ForegroundColor Green
+        } else {
+            Write-Host "  [X] Verification failed: Time did not match target." -ForegroundColor Red
+        }
+    } catch {
+        Write-Host "  [X] Failed to set time: $($_.Exception.Message). Ensure script runs with Administrator privileges." -ForegroundColor Red
     }
 
     Write-Host ""
@@ -333,19 +721,31 @@ function Set-CustomTime {
 }
 
 function Set-Rdr2Preset {
-    Write-Host "  [*] Setting fixed time for RDR2 Preset (2019-10-15 21:31:00)..." -ForegroundColor Cyan
+    Write-Host "  ================================================================" -ForegroundColor Cyan
+    Write-Host "                      RDR2 LAUNCH WORKAROUND" -ForegroundColor Yellow
+    Write-Host "  ================================================================" -ForegroundColor Cyan
+    Write-Host "  [!] WARNING: Setting system clock to 2019-10-15 will disrupt HTTPS/TLS" -ForegroundColor Yellow
+    Write-Host "      certificates, active browser logins, and secure network connections." -ForegroundColor Yellow
     Write-Host ""
-    $done = $false
-    try {
-        Set-Date -Date "2019-10-15 21:31:00" -ErrorAction Stop
-        $done = $true
-    } catch {
-        $done = $false
+    Write-Host "  Are you sure you want to apply RDR2 2019 time? (y/N): " -NoNewline -ForegroundColor White
+    $confirm = Read-Host
+    if ($confirm -ne "y" -and $confirm -ne "Y") {
+        Write-Host "  Operation canceled." -ForegroundColor DarkGray
+        return
     }
-    if ($done) {
-        Write-Host "  [OK] Done! Time set to 2019-10-15 21:31:00" -ForegroundColor Green
-    } else {
-        Write-Host "  [X] Failed to set time. Please make sure script is running as Administrator." -ForegroundColor Red
+
+    Write-Host "  [*] Setting fixed time for RDR2 Preset (2019-10-15 21:31:00)..." -ForegroundColor Cyan
+    try {
+        $target = [datetime]"2019-10-15 21:31:00"
+        Set-Date -Date $target -ErrorAction Stop
+        $curr = Get-Date
+        if ($curr.Year -eq 2019 -and $curr.Month -eq 10) {
+            Write-Host "  [OK] Done! Time verified set to $($curr.ToString('yyyy-MM-dd HH:mm:ss'))" -ForegroundColor Green
+        } else {
+            Write-Host "  [X] Failed: Clock was not updated. Ensure Administrator privileges." -ForegroundColor Red
+        }
+    } catch {
+        Write-Host "  [X] Failed to set time: $($_.Exception.Message)" -ForegroundColor Red
     }
     Write-Host ""
     Write-Host "  Current Time: " -NoNewline -ForegroundColor Gray
@@ -382,7 +782,7 @@ function View-Status {
         Write-Host " -> " -NoNewline -ForegroundColor DarkGray
         $testRes = Get-NtpTimeFromHost $p.Host
         if ($testRes.Success) {
-            Write-Host "Online ($($testRes.LatencyMs)ms)" -ForegroundColor Green
+            Write-Host "Online (Delay: $($testRes.LatencyMs)ms, Stratum: $($testRes.Stratum))" -ForegroundColor Green
         } else {
             Write-Host "Unreachable (UDP 123 offline/filtered)" -ForegroundColor DarkRed
         }
@@ -392,7 +792,7 @@ function View-Status {
     Write-Host ""
     Write-Host "  Local System Time: " -NoNewline -ForegroundColor Gray
     Write-Host (Get-Date -Format "yyyy-MM-dd HH:mm:ss (dddd)") -ForegroundColor Yellow
-    Write-Host "  UTC Atomic Time:   " -NoNewline -ForegroundColor Gray
+    Write-Host "  UTC Time:          " -NoNewline -ForegroundColor Gray
     Write-Host ([datetime]::UtcNow.ToString("yyyy-MM-dd HH:mm:ss")) -ForegroundColor Gray
     Write-Host "  Time Zone:         " -NoNewline -ForegroundColor Gray
     Write-Host ([System.TimeZoneInfo]::Local.DisplayName) -ForegroundColor DarkCyan
@@ -407,72 +807,57 @@ function Add-CustomPeer {
     Write-Host "  > " -NoNewline -ForegroundColor Yellow
     $raw = (Read-Host).Trim()
     
-    if ([string]::IsNullOrWhiteSpace($raw)) {
-        Write-Host "  [X] Error: Server address cannot be empty." -ForegroundColor Red
+    $check = Test-PeerAddress $raw
+    if (-not $check.IsValid) {
+        Write-Host "  [X] VALIDATION ERROR: $($check.Error)" -ForegroundColor Red
         return
     }
-
-    # Strict Validation: English characters only, no Persian, no spaces
-    foreach ($ch in $raw.ToCharArray()) {
-        if ([int]$ch -gt 127 -or [char]::IsWhiteSpace($ch) -or $ch -in @(',', ';', '/', '\', '?', '*', '!')) {
-            Write-Host "  [X] VALIDATION ERROR: Server address contains invalid characters." -ForegroundColor Red
-            Write-Host "      Only English letters, numbers, hyphens, and dots are allowed." -ForegroundColor DarkGray
-            return
-        }
-    }
-
-    # Format Check
-    $isIp = [System.Net.IPAddress]::TryParse($raw, [ref]$null)
-    $isDomain = $raw.Contains(".") -and -not $raw.StartsWith(".") -and -not $raw.EndsWith(".") -and -not $raw.Contains("..")
-    if (-not $isIp -and -not $isDomain -and -not ($raw -eq "localhost")) {
-        Write-Host "  [X] VALIDATION ERROR: '$raw' is not a valid domain or IP address." -ForegroundColor Red
-        return
-    }
+    $cleanHost = $check.CleanHost
 
     # Check if already in list
     $existing = Get-ConfiguredPeers
     foreach ($p in $existing) {
-        if ($p.Host.Equals($raw, [StringComparison]::OrdinalIgnoreCase)) {
-            Write-Host "  [!] Server '$raw' is already configured in your system peer list." -ForegroundColor Yellow
+        if ($p.Host.Equals($cleanHost, [StringComparison]::OrdinalIgnoreCase)) {
+            Write-Host "  [!] Server '$cleanHost' is already configured in your system peer list." -ForegroundColor Yellow
             return
         }
     }
 
     # Live DNS Resolution Check
-    Write-Host "  [*] Resolving DNS for $raw ... " -NoNewline -ForegroundColor Gray
+    Write-Host "  [*] Resolving DNS for $cleanHost ... " -NoNewline -ForegroundColor Gray
     try {
-        $addrs = [System.Net.Dns]::GetHostAddresses($raw)
+        $addrs = [System.Net.Dns]::GetHostAddresses($cleanHost)
         if (-not $addrs -or $addrs.Count -eq 0) {
             Write-Host "FAILED" -ForegroundColor Red
-            Write-Host "  [X] DNS Error: No IP address found for '$raw'." -ForegroundColor Red
+            Write-Host "  [X] DNS Error: No IP address found for '$cleanHost'." -ForegroundColor Red
             return
         }
         $ipStr = $addrs[0].IPAddressToString
         Write-Host "OK ($ipStr)" -ForegroundColor Green
     } catch {
         Write-Host "FAILED" -ForegroundColor Red
-        Write-Host "  [X] DNS Resolution Failed: Host '$raw' does not exist." -ForegroundColor Red
+        Write-Host "  [X] DNS Resolution Failed: Host '$cleanHost' could not be resolved." -ForegroundColor Red
         return
     }
 
     # Live NTP Latency Test
     Write-Host "  [*] Testing NTP connectivity (UDP 123) ... " -NoNewline -ForegroundColor Gray
-    $res = Get-NtpTimeFromHost $raw
+    $res = Get-NtpTimeFromHost $cleanHost
     if ($res.Success) {
-        Write-Host "OK ($($res.LatencyMs)ms)" -ForegroundColor Green
+        Write-Host "OK (Delay: $($res.LatencyMs)ms, Stratum: $($res.Stratum))" -ForegroundColor Green
     } else {
-        Write-Host "Timeout" -ForegroundColor Yellow
-        Write-Host "      (Notice: DNS resolved, but UDP 123 timed out - ISP or firewall may throttle UDP)" -ForegroundColor DarkGray
+        Write-Host "Timeout / Filtered" -ForegroundColor Yellow
+        Write-Host "      (Notice: $($res.Error) - server can still be added to registry)" -ForegroundColor DarkGray
     }
 
     # Add to list
     $newList = @()
     foreach ($p in $existing) { $newList += $p }
-    $newList += [PSCustomObject]@{ Host = $raw; Flag = "0x8"; Raw = "$raw,0x8" }
+    $newList += [PSCustomObject]@{ Host = $cleanHost; Flag = "0x8"; Raw = "$cleanHost,0x8" }
     
     if (Set-ConfiguredPeers $newList) {
         Write-Host ""
-        Write-Host "  [OK] SUCCESS: Server '$raw' successfully added to Windows Time Service!" -ForegroundColor Green
+        Write-Host "  [OK] SUCCESS: Server '$cleanHost' successfully added to Windows Time Service!" -ForegroundColor Green
     }
 }
 
@@ -490,7 +875,7 @@ function Remove-Peer {
 
     if ($peers.Count -le 1) {
         Write-Host "  [X] Action Denied: Only 1 peer configured ($($peers[0].Host))." -ForegroundColor Red
-        Write-Host "      Windows requires at least one active NTP peer." -ForegroundColor Yellow
+        Write-Host "      Windows Time service requires at least one configured NTP peer." -ForegroundColor Yellow
         return
     }
 
@@ -546,9 +931,21 @@ function Apply-PresetPeers($presetType) {
         }
     }
 
+    # Check domain join status
     try {
-        # Use official Microsoft w32tm administrative tool instead of direct registry manipulation
-        $null = w32tm /config /manualpeerlist:"$selectedPeers" /syncfromflags:manual /reliable:yes /update 2>&1
+        $comp = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+        if ($comp -and $comp.PartOfDomain) {
+            Write-Host "  [!] Notice: Machine is joined to domain '$($comp.Domain)'. Active Directory Group Policy may override manual peers." -ForegroundColor Yellow
+        }
+    } catch {}
+
+    try {
+        # Never specify /reliable:yes on client workstations
+        $w32Out = w32tm /config /manualpeerlist:"$selectedPeers" /syncfromflags:manual /update 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0 -and -not ($w32Out -match "command completed successfully")) {
+            Write-Host "  [X] Error configuring peers via w32tm: $($w32Out.Trim())" -ForegroundColor Red
+            return
+        }
         $null = sc.exe config w32time start= auto 2>&1
         Restart-Service w32time -Force -ErrorAction SilentlyContinue
         Write-Host "  [OK] Successfully configured and applied peers to Windows Time Service!" -ForegroundColor Green
@@ -630,14 +1027,17 @@ function Repair-W32Time {
 # ---- Main Interactive Loop ----
 while ($true) {
     Show-Header
-    Write-Host "  Options:" -ForegroundColor White
+    Write-Host "  Main Actions:" -ForegroundColor White
     Write-Host "   [1]  Sync with Windows System Peers (w32tm auto config)" -ForegroundColor Cyan
-    Write-Host "   [2]  Sync with Global NTP (International only, no .ir)" -ForegroundColor Cyan
+    Write-Host "   [2]  Sync with Global NTP (Consensus + HTTPS fallback)" -ForegroundColor Cyan
     Write-Host "   [3]  Set Custom Date and Time (interactive / quick today)" -ForegroundColor Cyan
-    Write-Host "   [4]  Set Fixed Date for RDR2 (2019-10-15 21:31)" -ForegroundColor Cyan
-    Write-Host "   [5]  View System Peers and NTP Status (Live Test)" -ForegroundColor Cyan
-    Write-Host "   [6]  Manage NTP Peers (Add, Remove, Test, Presets)" -ForegroundColor Yellow
-    Write-Host "   [7]  Diagnostics & Repair Windows Time Service" -ForegroundColor DarkCyan
+    Write-Host "   [4]  View System Peers and NTP Status (Live Test)" -ForegroundColor Cyan
+    Write-Host "   [5]  Manage NTP Peers (Add, Remove, Test, Presets)" -ForegroundColor Yellow
+    Write-Host "   [6]  Diagnostics & Repair Windows Time Service" -ForegroundColor DarkCyan
+    Write-Host ""
+    Write-Host "  Game Presets / Workarounds:" -ForegroundColor White
+    Write-Host "   [7]  Set RDR2 Game Fix Date (2019-10-15 21:31)" -ForegroundColor DarkYellow
+    Write-Host ""
     Write-Host "   [0]  Exit" -ForegroundColor Red
 
     Write-Host ""
@@ -673,26 +1073,26 @@ while ($true) {
         "4" {
             Clear-Host
             Show-Header
-            Set-Rdr2Preset
-            Write-Host ""
-            Write-Host "  Press any key to return to menu..." -ForegroundColor DarkGray
-            try { $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") } catch { [void][Console]::ReadLine() }
-        }
-        "5" {
-            Clear-Host
-            Show-Header
             View-Status
             Write-Host ""
             Write-Host "  Press any key to return to menu..." -ForegroundColor DarkGray
             try { $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") } catch { [void][Console]::ReadLine() }
         }
-        "6" {
+        "5" {
             Manage-Peers-Menu
+        }
+        "6" {
+            Clear-Host
+            Show-Header
+            Repair-W32Time
+            Write-Host ""
+            Write-Host "  Press any key to return to menu..." -ForegroundColor DarkGray
+            try { $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") } catch { [void][Console]::ReadLine() }
         }
         "7" {
             Clear-Host
             Show-Header
-            Repair-W32Time
+            Set-Rdr2Preset
             Write-Host ""
             Write-Host "  Press any key to return to menu..." -ForegroundColor DarkGray
             try { $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") } catch { [void][Console]::ReadLine() }
@@ -707,4 +1107,14 @@ while ($true) {
             Start-Sleep -Seconds 1
         }
     }
+}
+
+} catch {
+    Write-Host ""
+    Write-Host "  [X] UNHANDLED STARTUP ERROR:" -ForegroundColor Red
+    Write-Host "      $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  Press Enter to exit..." -ForegroundColor Gray
+    try { [void][Console]::ReadLine() } catch { Start-Sleep -Seconds 5 }
+    exit 1
 }
