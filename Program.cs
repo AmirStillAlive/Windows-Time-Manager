@@ -817,7 +817,7 @@ namespace WindowsTimeManager
         private void InitializeComponent()
         {
             // Standard Native Windows Form Properties
-            this.Text = "WinTime v0.1.2 (Alpha) - Windows Time & NTP Manager";
+            this.Text = "WinTime v0.1.1 (Alpha) - Windows Time & NTP Manager";
             try { this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch {}
             this.ClientSize = new Size(1000, 740);
             this.MinimumSize = new Size(920, 700);

@@ -149,7 +149,7 @@ function Show-Header {
 
     Write-Host ""
     Write-Host "  ================================================================" -ForegroundColor Cyan
-    Write-Host "         WINTIME v0.1.2 (ALPHA) - WINDOWS TIME & NTP MANAGER" -ForegroundColor Yellow
+    Write-Host "         WINTIME v0.1.1 (ALPHA) - WINDOWS TIME & NTP MANAGER" -ForegroundColor Yellow
     Write-Host "  ================================================================" -ForegroundColor Cyan
     Write-Host "   Current Time: " -ForegroundColor Gray -NoNewline
     Write-Host "$now" -ForegroundColor Yellow

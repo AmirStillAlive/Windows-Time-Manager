@@ -13,12 +13,12 @@
 [![Build](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml/badge.svg?branch=dev)](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-brightgreen.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue)](https://www.microsoft.com/windows)
-[![Version](https://img.shields.io/badge/version-v0.1.2--alpha-orange)](#)
+[![Version](https://img.shields.io/badge/version-v0.1.1--alpha-orange)](#)
 
 ---
 
 > [!WARNING]
-> **یادداشت نسخه آزمایشی (نسخه 0.1.2 - Alpha)**  
+> **یادداشت نسخه آزمایشی (نسخه 0.1.1 - Alpha)**  
 > این برنامه یک پروژه متن‌باز آزمایشی است و همچنان در مرحله توسعه قرار دارد. ممکن است دارای اشکالات، رفتارهای پیش‌بینی‌نشده روی برخی نسخه‌های ویندوز یا کاستی‌هایی در امکانات باشد. لطفاً با آگاهی از این موضوع از برنامه استفاده کنید. در صورت مشاهده هرگونه باگ یا داشتن پیشنهاد، خوشحال می‌شویم از طریق بخش Issues با ما در میان بگذارید!
 
 ---

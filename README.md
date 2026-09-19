@@ -13,12 +13,12 @@
 [![Build](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml/badge.svg?branch=dev)](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-brightgreen.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue)](https://www.microsoft.com/windows)
-[![Version](https://img.shields.io/badge/version-v0.1.2--alpha-orange)](#)
+[![Version](https://img.shields.io/badge/version-v0.1.1--alpha-orange)](#)
 
 ---
 
 > [!WARNING]
-> **Alpha / Work in Progress Notice (v0.1.2)**
+> **Alpha / Work in Progress Notice (v0.1.1)**
 > This tool is in early development. While the core features are tested, it is an experimental utility and may have bugs, unhandled edge cases, or rough edges on certain Windows configurations. Please use it with that in mind, and feel free to report issues or suggest improvements.
 
 ---
