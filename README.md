@@ -74,11 +74,6 @@ Open PowerShell and run:
 irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.ps1 | iex
 ```
 > **Note:** This installation method streams directly into memory and does not depend on local `ExecutionPolicy` restrictions. It downloads components into `%LOCALAPPDATA%\WinTime`, validates SHA-256 integrity fail-closed against official checksums, creates Desktop and Start Menu shortcuts, and provides an uninstaller.
-> 
-> For testing the development branch:
-> ```powershell
-> irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/dev/install.ps1 | iex
-> ```
 
 ### Method 2: Offline / Manual Folder Download
 1. Download both [`WinTime.bat`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.bat) and [`WinTime.ps1`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.ps1) (or download packaged assets from the latest [GitHub Release](https://github.com/AmirStillAlive/Windows-Time-Manager/releases)) and place them in the same folder.

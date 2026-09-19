@@ -74,11 +74,6 @@
 irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.ps1 | iex
 ```
 > **نکته:** این روش بدون نیاز به تغییر در `ExecutionPolicy` و به صورت امن در حافظه اجرا می‌شود. اسکریپت فایل‌ها را در مسیر `%LOCALAPPDATA%\WinTime` بارگیری کرده، صحت هش SHA-256 آن‌ها را بر اساس چک‌سام‌های رسمی بررسی می‌کند، میانبر دسکتاپ و منوی استارت را ایجاد کرده و فایل حذف نصب خودکار را قرار می‌دهد.
-> 
-> جهت تست برنچ در حال توسعه (dev):
-> ```powershell
-> irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/dev/install.ps1 | iex
-> ```
 
 ### روش دوم: دانلود دستی پوشه و اجرای آفلاین
 ۱. هر دو فایل [`WinTime.bat`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.bat) و [`WinTime.ps1`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.ps1) را دانلود کرده (یا از آخرین انتشار در [GitHub Releases](https://github.com/AmirStillAlive/Windows-Time-Manager/releases) دریافت کنید) و کنار یکدیگر در یک پوشه قرار دهید.
