@@ -751,9 +751,9 @@ namespace WindowsTimeManager
         private Panel pnlLogsView;
 
         // Action Rows
-        private SettingsActionRow rowRdr2;
         private SettingsActionRow rowSync;
         private SettingsActionRow rowGlobal;
+        private Button btnRdr2;
 
         // Custom Time Picker Controls
         private DateTimePicker dtpCustomDate;
@@ -974,19 +974,7 @@ namespace WindowsTimeManager
             pnlDashboard.Controls.Add(cardHero);
             currentY += 124;
 
-            // Action 1: RDR2 Fix
-            rowRdr2 = new SettingsActionRow(
-                "Red Dead Redemption 2 Game Fix",
-                "Sets system clock to October 15, 2019 (21:31:00) to bypass launch and activation errors.",
-                "target",
-                Theme.AccentOrange,
-                "⚡ Set RDR2 Time",
-                (s, e) => ActionSetRdr2()
-            ) { Location = new Point(22, currentY), Size = new Size(cardW, 92) };
-            pnlDashboard.Controls.Add(rowRdr2);
-            currentY += 104;
-
-            // Action 2: Windows System Sync
+            // Action 1: Windows System Sync
             rowSync = new SettingsActionRow(
                 "Windows Time Service Resync (w32tm)",
                 "Synchronizes your system clock from Windows registered peers using native w32tm /resync.",
@@ -998,7 +986,7 @@ namespace WindowsTimeManager
             pnlDashboard.Controls.Add(rowSync);
             currentY += 104;
 
-            // Action 3: Global NTP Sync
+            // Action 2: Global NTP Sync
             rowGlobal = new SettingsActionRow(
                 "Global International NTP Consensus Sync",
                 "Queries multiple Stratum 1/2 NTP servers (Cloudflare, Google, pool.ntp.org) with outlier rejection & HTTPS fallback.",
@@ -1124,6 +1112,69 @@ namespace WindowsTimeManager
 
             cardCustom.Controls.AddRange(new Control[] { lblCustomTitle, lblCustomSub, lblDate, dtpCustomDate, lblTime, dtpCustomTime, btnNow, btnApplyCustom });
             pnlDashboard.Controls.Add(cardCustom);
+            currentY += 156;
+
+            // Optional Game Preset: RDR2 (Compact card at bottom)
+            ModernFluentCard cardRdr2 = new ModernFluentCard()
+            {
+                Location = new Point(22, currentY),
+                Size = new Size(cardW, 58),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                UseCustomBg = true,
+                CustomBgStart = Color.FromArgb(34, 30, 28),
+                CustomBgEnd = Color.FromArgb(28, 25, 24)
+            };
+
+            Label lblRdr2Title = new Label()
+            {
+                Text = "🎮 Game Workaround: Red Dead Redemption 2",
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+                ForeColor = Theme.AccentOrange,
+                BackColor = Color.Transparent,
+                Location = new Point(16, 11),
+                AutoSize = true
+            };
+
+            Label lblRdr2Sub = new Label()
+            {
+                Text = "Sets clock to 2019-10-15 (21:31:00) for launcher bypass. Restore anytime with Sync above.",
+                Font = new Font("Segoe UI", 8F),
+                ForeColor = Theme.TextMuted,
+                BackColor = Color.Transparent,
+                Location = new Point(16, 31),
+                AutoSize = true
+            };
+
+            btnRdr2 = new Button()
+            {
+                Text = "⚡ Set RDR2 Time",
+                UseMnemonic = false,
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+                Size = new Size(160, 34),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(50, 32, 20),
+                ForeColor = Theme.AccentOrange,
+                Cursor = Cursors.Hand
+            };
+            btnRdr2.FlatAppearance.BorderColor = Color.FromArgb(140, 65, 10);
+            btnRdr2.MouseEnter += (s, e) => {
+                if (!btnRdr2.Text.StartsWith("✓") && !btnRdr2.Text.StartsWith("✗"))
+                    btnRdr2.BackColor = Color.FromArgb(70, 42, 24);
+            };
+            btnRdr2.MouseLeave += (s, e) => {
+                if (!btnRdr2.Text.StartsWith("✓") && !btnRdr2.Text.StartsWith("✗"))
+                    btnRdr2.BackColor = Color.FromArgb(50, 32, 20);
+            };
+            btnRdr2.Click += (s, e) => ActionSetRdr2();
+
+            Action reposRdr2 = () => {
+                btnRdr2.Location = new Point(cardRdr2.Width - btnRdr2.Width - 16, 12);
+            };
+            cardRdr2.Resize += (s, e) => reposRdr2();
+            reposRdr2();
+
+            cardRdr2.Controls.AddRange(new Control[] { lblRdr2Title, lblRdr2Sub, btnRdr2 });
+            pnlDashboard.Controls.Add(cardRdr2);
 
             this.Controls.Add(pnlDashboard);
         }
@@ -1809,23 +1860,37 @@ namespace WindowsTimeManager
                 return;
             }
 
-            rowRdr2.SetLoading("⏳ Setting Clock...");
+            btnRdr2.Enabled = false;
+            btnRdr2.Text = "⏳ Setting Clock...";
             ThreadPool.QueueUserWorkItem((state) => {
                 Log("Applying RDR2 Preset time (2019-10-15 21:31:00)...");
                 DateTime dtLocal = new DateTime(2019, 10, 15, 21, 31, 0, DateTimeKind.Local);
                 string err;
                 bool ok = NativeMethods.SetSystemClockUtc(dtLocal.ToUniversalTime(), out err);
                 this.Invoke(new Action(() => {
+                    btnRdr2.Enabled = true;
                     if (ok)
                     {
                         Log("[✓] SUCCESS: RDR2 fixed time (2019-10-15 21:31:00) applied successfully!", Theme.AccentGreen);
-                        rowRdr2.SetResult(true, "✓ RDR2 Time Set!");
+                        btnRdr2.Text = "✓ RDR2 Applied!";
+                        btnRdr2.BackColor = Color.FromArgb(20, 85, 45);
                     }
                     else
                     {
                         Log("[✗] ERROR: Failed to apply RDR2 time: " + err, Theme.AccentRed);
-                        rowRdr2.SetResult(false, "✗ Need Admin!");
+                        btnRdr2.Text = "✗ Need Admin!";
+                        btnRdr2.BackColor = Color.FromArgb(95, 25, 25);
                     }
+
+                    System.Windows.Forms.Timer tmr = new System.Windows.Forms.Timer();
+                    tmr.Interval = 2500;
+                    tmr.Tick += (ts, te) => {
+                        tmr.Stop();
+                        tmr.Dispose();
+                        btnRdr2.Text = "⚡ Set RDR2 Time";
+                        btnRdr2.BackColor = Color.FromArgb(50, 32, 20);
+                    };
+                    tmr.Start();
                 }));
             });
         }

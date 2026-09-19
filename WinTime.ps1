@@ -854,14 +854,17 @@ function Repair-W32Time {
 # ---- Main Interactive Loop ----
 while ($true) {
     Show-Header
-    Write-Host "  Options:" -ForegroundColor White
+    Write-Host "  Main Actions:" -ForegroundColor White
     Write-Host "   [1]  Sync with Windows System Peers (w32tm auto config)" -ForegroundColor Cyan
-    Write-Host "   [2]  Sync with Global NTP (International only, no .ir)" -ForegroundColor Cyan
+    Write-Host "   [2]  Sync with Global NTP (Consensus + HTTPS fallback)" -ForegroundColor Cyan
     Write-Host "   [3]  Set Custom Date and Time (interactive / quick today)" -ForegroundColor Cyan
-    Write-Host "   [4]  Set Fixed Date for RDR2 (2019-10-15 21:31)" -ForegroundColor Cyan
-    Write-Host "   [5]  View System Peers and NTP Status (Live Test)" -ForegroundColor Cyan
-    Write-Host "   [6]  Manage NTP Peers (Add, Remove, Test, Presets)" -ForegroundColor Yellow
-    Write-Host "   [7]  Diagnostics & Repair Windows Time Service" -ForegroundColor DarkCyan
+    Write-Host "   [4]  View System Peers and NTP Status (Live Test)" -ForegroundColor Cyan
+    Write-Host "   [5]  Manage NTP Peers (Add, Remove, Test, Presets)" -ForegroundColor Yellow
+    Write-Host "   [6]  Diagnostics & Repair Windows Time Service" -ForegroundColor DarkCyan
+    Write-Host ""
+    Write-Host "  Game Presets / Workarounds:" -ForegroundColor White
+    Write-Host "   [7]  Set RDR2 Game Fix Date (2019-10-15 21:31)" -ForegroundColor DarkYellow
+    Write-Host ""
     Write-Host "   [0]  Exit" -ForegroundColor Red
 
     Write-Host ""
@@ -897,26 +900,26 @@ while ($true) {
         "4" {
             Clear-Host
             Show-Header
-            Set-Rdr2Preset
-            Write-Host ""
-            Write-Host "  Press any key to return to menu..." -ForegroundColor DarkGray
-            try { $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") } catch { [void][Console]::ReadLine() }
-        }
-        "5" {
-            Clear-Host
-            Show-Header
             View-Status
             Write-Host ""
             Write-Host "  Press any key to return to menu..." -ForegroundColor DarkGray
             try { $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") } catch { [void][Console]::ReadLine() }
         }
-        "6" {
+        "5" {
             Manage-Peers-Menu
+        }
+        "6" {
+            Clear-Host
+            Show-Header
+            Repair-W32Time
+            Write-Host ""
+            Write-Host "  Press any key to return to menu..." -ForegroundColor DarkGray
+            try { $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") } catch { [void][Console]::ReadLine() }
         }
         "7" {
             Clear-Host
             Show-Header
-            Repair-W32Time
+            Set-Rdr2Preset
             Write-Host ""
             Write-Host "  Press any key to return to menu..." -ForegroundColor DarkGray
             try { $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") } catch { [void][Console]::ReadLine() }
