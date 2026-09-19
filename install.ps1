@@ -28,7 +28,7 @@ if (-not (Test-Path $installDir)) {
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 }
 
-$version = "v0.1.0"
+$version = "v0.1.2"
 $rawBase = "https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/$version"
 $releaseBase = "https://github.com/AmirStillAlive/Windows-Time-Manager/releases/download/$version"
 
