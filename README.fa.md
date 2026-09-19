@@ -13,12 +13,12 @@
 [![Build](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml/badge.svg?branch=dev)](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-brightgreen.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue)](https://www.microsoft.com/windows)
-[![Version](https://img.shields.io/badge/version-v0.1.1--alpha-orange)](#)
+[![Version](https://img.shields.io/badge/version-v0.1.3--alpha-orange)](#)
 
 ---
 
 > [!WARNING]
-> **یادداشت نسخه آزمایشی (نسخه 0.1.1 - Alpha)**  
+> **یادداشت نسخه آزمایشی (نسخه 0.1.3 - Alpha)**  
 > این برنامه یک پروژه متن‌باز آزمایشی است و همچنان در مرحله توسعه قرار دارد. ممکن است دارای اشکالات، رفتارهای پیش‌بینی‌نشده روی برخی نسخه‌های ویندوز یا کاستی‌هایی در امکانات باشد. لطفاً با آگاهی از این موضوع از برنامه استفاده کنید. در صورت مشاهده هرگونه باگ یا داشتن پیشنهاد، خوشحال می‌شویم از طریق بخش Issues با ما در میان بگذارید!
 
 ---
@@ -57,14 +57,16 @@
 * کلید آماده برای بردن سریع ساعت به زمان فیکس بازی RDR2 و امکان بازگرداندن آنی به ساعت دقیق پس از ورود به بازی.
 
 ### ۵. 💻 نسخه گرافیکی و خط فرمان
-* **نسخه گرافیکی (`WinTime.exe`):** رابط کاربری جمع‌وجور بر پایه Windows Forms با گزارش لحظه‌ای وضعیت.
-* **نسخه خط فرمان (`WinTime.ps1`):** اسکریپت PowerShell برای کسانی که ترجیح می‌دهند بدون واسط گرافیکی و سریع در کنسول کار کنند.
+* **نسخه گرافیکی (`WinTime.exe`):** رابط کاربری بر پایه Windows Forms با گزارش لحظه‌ای وضعیت و تم تاریک مدرن. برنامه با دسترسی عادی کاربر (`asInvoker`) باز می‌شود و تنها هنگام اجرای عملیات حساس نیازمند ادمین، تأیید UAC درخواست می‌شود.
+* **اجراکننده سریع (`WinTime.bat`):** فایل بچ برای اجرای مستقیم و آسان نسخه خط فرمان با دور زدن محدودیت‌های پالیسی پاورشل. فقط کافیست روی آن دابل‌کلیک کنید.
+* **نسخه خط فرمان (`WinTime.ps1`):** اسکریپت پیشرفته PowerShell برای کاربران خط فرمان و اسکریپت‌نویسی خودکار. همچنین با راست‌کلیک روی `WinTime.ps1` و انتخاب **"Run with PowerShell"** قابل اجراست.
 
 ---
 
 ## 📁 ساختار مخزن
 
 ```text
+├── WinTime.bat                 # لانچر بچ برای اجرای سریع و بدون دردسر CLI
 ├── WinTime.ps1                 # اسکریپت خط فرمان PowerShell
 ├── Program.cs                  # کد منبع اپلیکیشن گرافیکی (C#)
 ├── Core/                       # ماژول‌های زیرساختی
@@ -78,11 +80,13 @@
 ├── Tests/                      # تست‌های خودکار
 │   ├── UnitTests.cs            # کدهای تست واحد
 │   └── run_tests.bat           # اسکریپت اجرای تست‌ها
-├── app.manifest                # مانیفست اختیارات ویندوز و رزولوشن
+├── app.manifest                # مانیفست اختیارات کاربری و رزولوشن بالا
 ├── app.ico                     # آیکون برنامه
 ├── build.bat                   # اسکریپت کامپایل محلی
-├── install.ps1                 # اسکریپت نصب سریع تحت وب
+├── install.ps1                 # اسکریپت نصب سریع تحت وب همراه با اعتبارسنجی هش و امضا
+├── SHA256SUMS.txt              # فایل بررسی صحت و یکپارچگی فایل‌ها (SHA-256)
 ├── .github/workflows/build.yml # پایپ‌لاین تست و بیلد خودکار در گیت‌هاب
+├── CHANGELOG.md                # تاریخچه تغییرات و نسخه‌ها
 ├── README.md                   # توضیحات انگلیسی
 ├── README.fa.md                # توضیحات فارسی
 └── LICENSE                     # گواهی متن‌باز MIT

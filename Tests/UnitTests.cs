@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net;
 using WindowsTimeManager.Core;
 
@@ -32,6 +33,10 @@ namespace WindowsTimeManager.Tests
             RunTest("Peer Validator: Rejection of IPv6 Loopback (::1) and Multicast", TestPeerValidator_RejectIpv6LoopbackAndMulticast);
             RunTest("Peer Validator: FQDN Domain Validation Rules (hyphens, dots, TLD)", TestPeerValidator_HostnameRules);
             RunTest("Process Runner: Strict Exit Code & False-Success Elimination", TestProcessRunner_ExitCode);
+            RunTest("NTP Packet: 2036 Rollover Era-Inference Heuristic", TestNtpPacket_Rollover2036);
+            RunTest("HTTPS Time: RFC 1123, RFC 850, and ANSI C Date Parsing", TestHttpsTimeClient_ParseHttpDate);
+            RunTest("Process Runner: Process Timeout and Clean Process Kill", TestProcessRunner_TimeoutAndKill);
+            RunTest("Time Service: Domain Policy Blocking and Override Flag", TestTimeServiceManager_DomainPolicyAndOverride);
 
             Console.WriteLine();
             Console.WriteLine("==============================================================");
@@ -290,6 +295,96 @@ namespace WindowsTimeManager.Tests
             // Test non-existent executable
             ProcessResult rBad = ProcessRunner.Execute("non_existent_command_xyz_123.exe", "", timeoutMs: 1000);
             Assert(!rBad.Success, "Non-existent command must report Success = false");
+        }
+
+        private static void TestProcessRunner_TimeoutAndKill()
+        {
+            // Ping 127.0.0.1 10 times takes ~9-10 seconds. Timeout is set to 400ms.
+            DateTime start = DateTime.UtcNow;
+            ProcessResult res = ProcessRunner.Execute("cmd.exe", "/c ping 127.0.0.1 -n 10", timeoutMs: 400);
+            TimeSpan elapsed = DateTime.UtcNow - start;
+
+            Assert(res.TimedOut, "ProcessRunner must flag TimedOut = true when execution exceeds timeout");
+            Assert(!res.Success, "Timed-out process must report Success = false");
+            Assert(res.ErrorMessage != null && res.ErrorMessage.Contains("timed out"), "Error message must report timeout");
+            Assert(elapsed.TotalSeconds < 5.0, "Process must be terminated promptly and not hang");
+        }
+
+        #endregion
+
+        #region Extended Protocol, HTTP & Integration Tests
+
+        private static void TestNtpPacket_Rollover2036()
+        {
+            byte[] buf = new byte[8];
+
+            // Era 0: current epoch (e.g. year 2026, intPart >= 0x80000000UL)
+            DateTime era0Date = new DateTime(2026, 9, 19, 12, 0, 0, DateTimeKind.Utc);
+            NtpPacket.WriteTimestamp(buf, 0, era0Date);
+            DateTime readEra0 = NtpPacket.ReadTimestamp(buf, 0);
+            Assert(readEra0.Year == 2026, "Era 0 timestamp year must be 2026");
+            Assert(Math.Abs((readEra0 - era0Date).TotalSeconds) < 0.001, "Era 0 timestamp must match original within 1ms");
+
+            // Era 1: post-2036 epoch (e.g. year 2038, intPart < 0x80000000UL)
+            DateTime era1Date = new DateTime(2038, 5, 10, 8, 30, 0, DateTimeKind.Utc);
+            NtpPacket.WriteTimestamp(buf, 0, era1Date);
+            DateTime readEra1 = NtpPacket.ReadTimestamp(buf, 0);
+            Assert(readEra1.Year == 2038, "Era 1 timestamp year must be 2038");
+            Assert(Math.Abs((readEra1 - era1Date).TotalSeconds) < 0.001, "Era 1 timestamp must match original within 1ms");
+        }
+
+        private static void TestHttpsTimeClient_ParseHttpDate()
+        {
+            DateTime dt;
+
+            // RFC 1123 standard format
+            Assert(HttpsTimeClient.TryParseHttpDate("Sun, 06 Nov 1994 08:49:37 GMT", out dt), "RFC 1123 date must parse");
+            Assert(dt.Year == 1994 && dt.Month == 11 && dt.Day == 6 && dt.Hour == 8 && dt.Minute == 49 && dt.Second == 37, "RFC 1123 fields must match");
+            Assert(dt.Kind == DateTimeKind.Utc, "Parsed date must be UTC");
+
+            // RFC 850 legacy format
+            Assert(HttpsTimeClient.TryParseHttpDate("Sunday, 06-Nov-94 08:49:37 GMT", out dt), "RFC 850 date must parse");
+            Assert(dt.Year == 1994 && dt.Month == 11 && dt.Day == 6 && dt.Hour == 8 && dt.Minute == 49 && dt.Second == 37, "RFC 850 fields must match");
+
+            // ANSI C asctime() format
+            Assert(HttpsTimeClient.TryParseHttpDate("Sun Nov  6 08:49:37 1994", out dt), "ANSI C asctime date must parse");
+            Assert(dt.Year == 1994 && dt.Month == 11 && dt.Day == 6 && dt.Hour == 8 && dt.Minute == 49 && dt.Second == 37, "ANSI C fields must match");
+
+            // Invalid formats
+            Assert(!HttpsTimeClient.TryParseHttpDate("invalid-date-string", out dt), "Garbage date string must return false");
+            Assert(!HttpsTimeClient.TryParseHttpDate(null, out dt), "Null date string must return false");
+            Assert(!HttpsTimeClient.TryParseHttpDate("", out dt), "Empty date string must return false");
+        }
+
+        private static void TestTimeServiceManager_DomainPolicyAndOverride()
+        {
+            try
+            {
+                TimeServiceManager.DomainCheckOverride = delegate(out string domain)
+                {
+                    domain = "CORP.CONTOSO.COM";
+                    return true;
+                };
+
+                string message;
+                List<string> testPeers = new List<string> { "time.google.com" };
+
+                // Should be blocked when allowDomainOverride is false
+                bool blocked = !TimeServiceManager.SetSystemPeers(testPeers, allowDomainOverride: false, message: out message);
+                Assert(blocked, "Domain-joined system must block NTP reconfiguration when allowDomainOverride is false");
+                Assert(message != null && message.Contains("CORP.CONTOSO.COM"), "Block message must specify domain name");
+
+                // When allowDomainOverride is true, domain check is bypassed.
+                // We pass invalid peers to verify that domain check passed and reached peer validation step.
+                List<string> invalidPeers = new List<string> { "invalid_domain_test" };
+                bool overrideAllowed = !TimeServiceManager.SetSystemPeers(invalidPeers, allowDomainOverride: true, message: out message);
+                Assert(overrideAllowed, "Domain override must allow execution to proceed past domain check");
+                Assert(message != null && message.Contains("No valid peer entries found"), "Domain check must pass and fail on peer validation instead");
+            }
+            finally
+            {
+                TimeServiceManager.DomainCheckOverride = null;
+            }
         }
 
         #endregion

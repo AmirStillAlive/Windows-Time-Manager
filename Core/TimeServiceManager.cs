@@ -27,11 +27,42 @@ namespace WindowsTimeManager.Core
     {
         private const string W32TimeParamPath = @"SYSTEM\CurrentControlSet\Services\W32Time\Parameters";
 
+        // In-memory cache for w32tm /query /source
+        private static string _cachedActiveSource = null;
+        private static DateTime _cacheTimestamp = DateTime.MinValue;
+        private static readonly TimeSpan CacheDuration = TimeSpan.FromSeconds(5);
+        private static readonly object _cacheLock = new object();
+
+        // Testing seam for mocking domain join state
+        public delegate bool DomainCheckDelegate(out string domainOrWorkgroupName);
+        public static DomainCheckDelegate DomainCheckOverride = null;
+
+        /// <summary>
+        /// Clears the cached w32tm /query /source result.
+        /// </summary>
+        public static void InvalidateCache()
+        {
+            lock (_cacheLock)
+            {
+                _cachedActiveSource = null;
+                _cacheTimestamp = DateTime.MinValue;
+            }
+        }
+
         /// <summary>
         /// Reads configured NTP peers along with current service sync Type (NTP, Nt5DS, NoSync, AllSync)
-        /// and queries active source status from w32tm.
+        /// and queries active source status from w32tm (using cached source if within 5s).
         /// </summary>
         public static List<SystemPeerInfo> GetSystemPeers(out string syncType, out string activeSource)
+        {
+            return GetSystemPeers(out syncType, out activeSource, false);
+        }
+
+        /// <summary>
+        /// Reads configured NTP peers along with current service sync Type (NTP, Nt5DS, NoSync, AllSync)
+        /// and queries active source status from w32tm with optional forceRefresh flag.
+        /// </summary>
+        public static List<SystemPeerInfo> GetSystemPeers(out string syncType, out string activeSource, bool forceRefresh)
         {
             List<SystemPeerInfo> list = new List<SystemPeerInfo>();
             syncType = "Unknown";
@@ -70,11 +101,33 @@ namespace WindowsTimeManager.Core
             }
             catch { }
 
-            // Query active source from w32tm /query /source
-            ProcessResult srcResult = ProcessRunner.Execute("w32tm.exe", "/query /source", timeoutMs: 3000);
-            if (srcResult.Success && !string.IsNullOrEmpty(srcResult.StdOut))
+            // Query active source from w32tm /query /source (with 5-second cache)
+            string source = null;
+            lock (_cacheLock)
             {
-                activeSource = srcResult.StdOut.Trim();
+                if (!forceRefresh && _cachedActiveSource != null && (DateTime.UtcNow - _cacheTimestamp) < CacheDuration)
+                {
+                    source = _cachedActiveSource;
+                }
+            }
+
+            if (source == null)
+            {
+                ProcessResult srcResult = ProcessRunner.Execute("w32tm.exe", "/query /source", timeoutMs: 3000);
+                if (srcResult.Success && !string.IsNullOrEmpty(srcResult.StdOut))
+                {
+                    source = srcResult.StdOut.Trim();
+                    lock (_cacheLock)
+                    {
+                        _cachedActiveSource = source;
+                        _cacheTimestamp = DateTime.UtcNow;
+                    }
+                }
+            }
+
+            if (!string.IsNullOrEmpty(source))
+            {
+                activeSource = source;
                 foreach (SystemPeerInfo peer in list)
                 {
                     if (activeSource.IndexOf(peer.Host, StringComparison.OrdinalIgnoreCase) >= 0)
@@ -104,7 +157,11 @@ namespace WindowsTimeManager.Core
 
             // Domain check: avoid silently corrupting enterprise domain hierarchy
             string domainName;
-            if (NativeMethods.IsDomainJoined(out domainName) && !allowDomainOverride)
+            bool isJoined = (DomainCheckOverride != null)
+                ? DomainCheckOverride(out domainName)
+                : NativeMethods.IsDomainJoined(out domainName);
+
+            if (isJoined && !allowDomainOverride)
             {
                 message = string.Format("System is joined to Active Directory domain '{0}'. Overriding manual NTP peers might disrupt domain time synchronization.", domainName);
                 return false;
@@ -148,6 +205,8 @@ namespace WindowsTimeManager.Core
 
             // Verify w32time is running, start if stopped
             EnsureServiceRunning();
+
+            InvalidateCache();
 
             message = string.Format("Successfully applied {0} NTP peer(s) to Windows Time Service.", validatedPeers.Count);
             return true;

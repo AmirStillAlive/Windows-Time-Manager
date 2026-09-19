@@ -93,6 +93,19 @@ namespace WindowsTimeManager.Core
         /// </summary>
         public static bool EnablePrivilege(string privilegeName, out string errorMessage)
         {
+            return SetPrivilegeAttribute(privilegeName, SE_PRIVILEGE_ENABLED, out errorMessage);
+        }
+
+        /// <summary>
+        /// Disables the specified privilege in the current process access token.
+        /// </summary>
+        public static bool DisablePrivilege(string privilegeName, out string errorMessage)
+        {
+            return SetPrivilegeAttribute(privilegeName, 0, out errorMessage);
+        }
+
+        private static bool SetPrivilegeAttribute(string privilegeName, uint attributes, out string errorMessage)
+        {
             errorMessage = null;
             IntPtr hToken = IntPtr.Zero;
             try
@@ -116,7 +129,7 @@ namespace WindowsTimeManager.Core
                 {
                     PrivilegeCount = 1,
                     Luid = luid,
-                    Attributes = SE_PRIVILEGE_ENABLED
+                    Attributes = attributes
                 };
 
                 // Clear previous error state before API call
@@ -155,38 +168,102 @@ namespace WindowsTimeManager.Core
 
         /// <summary>
         /// Sets the system clock with sub-second (millisecond) precision using SetSystemTime.
+        /// Enables SeSystemtimePrivilege for the duration of the call and reverts to disabled
+        /// state immediately afterwards to maintain least privilege.
         /// </summary>
         public static bool SetSystemClockUtc(DateTime utcTime, out string errorMessage)
         {
             errorMessage = null;
+            IntPtr hToken = IntPtr.Zero;
+            bool privilegeEnabled = false;
+            LUID luid = new LUID();
 
-            string privErr;
-            if (!EnablePrivilege("SeSystemtimePrivilege", out privErr))
+            try
             {
-                errorMessage = "Cannot acquire SeSystemtimePrivilege: " + privErr;
-                return false;
+                if (!OpenProcessToken(Process.GetCurrentProcess().Handle, TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, ref hToken))
+                {
+                    int err = Marshal.GetLastWin32Error();
+                    errorMessage = string.Format("Failed to open process token (Win32 Error {0}: {1})", err, new Win32Exception(err).Message);
+                    return false;
+                }
+
+                if (!LookupPrivilegeValue(null, "SeSystemtimePrivilege", ref luid))
+                {
+                    int err = Marshal.GetLastWin32Error();
+                    errorMessage = string.Format("Privilege 'SeSystemtimePrivilege' not found (Win32 Error {0})", err);
+                    return false;
+                }
+
+                TOKEN_PRIVILEGES tpEnable = new TOKEN_PRIVILEGES
+                {
+                    PrivilegeCount = 1,
+                    Luid = luid,
+                    Attributes = SE_PRIVILEGE_ENABLED
+                };
+
+                Marshal.GetLastWin32Error();
+                bool adjusted = AdjustTokenPrivileges(hToken, false, ref tpEnable, 0, IntPtr.Zero, IntPtr.Zero);
+                int lastWin32Error = Marshal.GetLastWin32Error();
+
+                if (!adjusted || lastWin32Error != 0)
+                {
+                    if (lastWin32Error == ERROR_NOT_ALL_ASSIGNED)
+                    {
+                        errorMessage = "Process token does not possess 'SeSystemtimePrivilege'. Administrative elevation is required.";
+                    }
+                    else
+                    {
+                        errorMessage = string.Format("AdjustTokenPrivileges failed (Win32 Error {0}: {1})",
+                            lastWin32Error, new Win32Exception(lastWin32Error).Message);
+                    }
+                    return false;
+                }
+
+                privilegeEnabled = true;
+
+                SYSTEMTIME st = new SYSTEMTIME
+                {
+                    wYear = (ushort)utcTime.Year,
+                    wMonth = (ushort)utcTime.Month,
+                    wDayOfWeek = (ushort)utcTime.DayOfWeek,
+                    wDay = (ushort)utcTime.Day,
+                    wHour = (ushort)utcTime.Hour,
+                    wMinute = (ushort)utcTime.Minute,
+                    wSecond = (ushort)utcTime.Second,
+                    wMilliseconds = (ushort)utcTime.Millisecond
+                };
+
+                if (!SetSystemTime(ref st))
+                {
+                    int err = Marshal.GetLastWin32Error();
+                    errorMessage = string.Format("SetSystemTime failed (Win32 Error {0}: {1})", err, new Win32Exception(err).Message);
+                    return false;
+                }
+
+                return true;
             }
-
-            SYSTEMTIME st = new SYSTEMTIME
+            finally
             {
-                wYear = (ushort)utcTime.Year,
-                wMonth = (ushort)utcTime.Month,
-                wDayOfWeek = (ushort)utcTime.DayOfWeek,
-                wDay = (ushort)utcTime.Day,
-                wHour = (ushort)utcTime.Hour,
-                wMinute = (ushort)utcTime.Minute,
-                wSecond = (ushort)utcTime.Second,
-                wMilliseconds = (ushort)utcTime.Millisecond
-            };
-
-            if (!SetSystemTime(ref st))
-            {
-                int err = Marshal.GetLastWin32Error();
-                errorMessage = string.Format("SetSystemTime failed (Win32 Error {0}: {1})", err, new Win32Exception(err).Message);
-                return false;
+                if (hToken != IntPtr.Zero)
+                {
+                    if (privilegeEnabled)
+                    {
+                        // Revert privilege back to disabled (Attributes = 0)
+                        TOKEN_PRIVILEGES tpDisable = new TOKEN_PRIVILEGES
+                        {
+                            PrivilegeCount = 1,
+                            Luid = luid,
+                            Attributes = 0
+                        };
+                        try
+                        {
+                            AdjustTokenPrivileges(hToken, false, ref tpDisable, 0, IntPtr.Zero, IntPtr.Zero);
+                        }
+                        catch { }
+                    }
+                    CloseHandle(hToken);
+                }
             }
-
-            return true;
         }
 
         public static bool IsAdministrator()

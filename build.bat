@@ -20,7 +20,7 @@ if not exist "%CSC%" (
 )
 
 echo  [*] Compiling Program.cs with native Windows C# compiler and icon...
-"%CSC%" /nologo /target:winexe /optimize+ /platform:anycpu /win32manifest:app.manifest /win32icon:app.ico /out:WinTime.exe Program.cs Core\*.cs
+"%CSC%" /nologo /target:winexe /r:System.Net.Http.dll /optimize+ /platform:anycpu /win32manifest:app.manifest /win32icon:app.ico /out:WinTime.exe Program.cs Core\*.cs
 
 if %errorlevel% equ 0 (
     echo.

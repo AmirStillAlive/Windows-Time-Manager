@@ -13,12 +13,12 @@
 [![Build](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml/badge.svg?branch=dev)](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-brightgreen.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue)](https://www.microsoft.com/windows)
-[![Version](https://img.shields.io/badge/version-v0.1.1--alpha-orange)](#)
+[![Version](https://img.shields.io/badge/version-v0.1.3--alpha-orange)](#)
 
 ---
 
 > [!WARNING]
-> **Alpha / Work in Progress Notice (v0.1.1)**
+> **Alpha / Work in Progress Notice (v0.1.3)**
 > This tool is in early development. While the core features are tested, it is an experimental utility and may have bugs, unhandled edge cases, or rough edges on certain Windows configurations. Please use it with that in mind, and feel free to report issues or suggest improvements.
 
 ---
@@ -57,14 +57,16 @@ What started as a tiny quick-fix script for that game issue gradually grew: Wind
 * Includes a quick preset button to set the date to `2019-10-15 21:31:00` for the RDR2 launch workaround, alongside a one-click button to restore the accurate network time right after.
 
 ### 5. 💻 GUI & CLI Options
-* **GUI (`WinTime.exe`):** Standalone desktop application with real-time status display and dark theme.
-* **CLI (`WinTime.ps1`):** Standalone PowerShell script for command-line users or automation.
+* **GUI (`WinTime.exe`):** Standalone desktop application with real-time status display and dark theme. Runs without requiring initial UAC elevation (`asInvoker`), elevating on-demand when administrative actions are invoked.
+* **CLI Launcher (`WinTime.bat`):** Batch launcher that opens the CLI with `-NoProfile -ExecutionPolicy Bypass`. Simply double-click to run.
+* **CLI (`WinTime.ps1`):** Standalone PowerShell script for command-line users or automation. Can also be launched by right-clicking `WinTime.ps1` and choosing **"Run with PowerShell"**.
 
 ---
 
 ## 📁 Repository Structure
 
 ```text
+├── WinTime.bat                 # Easy double-click batch launcher for CLI
 ├── WinTime.ps1                 # Standalone PowerShell script
 ├── Program.cs                  # Windows Forms UI application (C#)
 ├── Core/                       # Core modules
@@ -78,11 +80,13 @@ What started as a tiny quick-fix script for that game issue gradually grew: Wind
 ├── Tests/                      # Unit test suite
 │   ├── UnitTests.cs            # Protocol correctness & validation tests
 │   └── run_tests.bat           # Test runner
-├── app.manifest                # UAC elevation and DPI awareness manifest
+├── app.manifest                # Invoker execution level & DPI awareness manifest
 ├── app.ico                     # Application icon
 ├── build.bat                   # Local build script (uses csc.exe)
-├── install.ps1                 # One-liner web installer
+├── install.ps1                 # One-liner web installer with hash & signature checks
+├── SHA256SUMS.txt              # Cryptographic SHA-256 release checksums
 ├── .github/workflows/build.yml # CI workflow for tests & release packaging
+├── CHANGELOG.md                # Version release notes & changelog
 ├── README.md                   # English documentation
 ├── README.fa.md                # Persian documentation
 └── LICENSE                     # MIT License

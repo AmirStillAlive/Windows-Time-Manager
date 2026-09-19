@@ -318,6 +318,11 @@ namespace WindowsTimeManager
             return TimeServiceManager.SetSystemPeers(peerList, false, out message);
         }
 
+        public static bool SetSystemPeers(List<string> peerList, bool allowDomainOverride, out string message)
+        {
+            return TimeServiceManager.SetSystemPeers(peerList, allowDomainOverride, out message);
+        }
+
         public static void RunHiddenProcess(string fileName, string args)
         {
             ProcessRunner.Execute(fileName, args, 8000);
@@ -516,6 +521,18 @@ namespace WindowsTimeManager
             };
             t.Start();
         }
+
+        public void SetButtonEnabled(bool enabled)
+        {
+            if (this.InvokeRequired)
+            {
+                this.Invoke(new Action(() => SetButtonEnabled(enabled)));
+                return;
+            }
+            if (actionBtn != null) actionBtn.Enabled = enabled;
+        }
+
+        public Button ActionButton { get { return actionBtn; } }
 
         protected override void OnResize(EventArgs e)
         {
@@ -768,6 +785,15 @@ namespace WindowsTimeManager
         private TextBox txtCustomHost;
         private Button btnAddHost;
 
+        // Concurrency Guard & Domain Override
+        private CheckBox chkAllowDomainOverride;
+        private ToolTip actionToolTip;
+        private SemaphoreSlim _operationLock = new SemaphoreSlim(1, 1);
+        private Button btnElevate;
+        private Button btnPresetAll5;
+        private Button btnPresetGlobal;
+        private Button btnPresetDefault;
+
         // Logs View Controls
         private CustomDarkConsole consoleLog;
 
@@ -776,6 +802,11 @@ namespace WindowsTimeManager
         public MainForm()
         {
             this.DoubleBuffered = true;
+            actionToolTip = new ToolTip();
+            actionToolTip.AutoPopDelay = 6000;
+            actionToolTip.InitialDelay = 300;
+            actionToolTip.ReshowDelay = 150;
+
             InitializeComponent();
             LoadPeers();
             SwitchTab("dashboard");
@@ -786,6 +817,58 @@ namespace WindowsTimeManager
             {
                 Log("[!] Notice: Please run this tool as Administrator to change the system time.", Theme.AccentYellow);
             }
+        }
+
+        private bool EnsureAdminOrPrompt(string actionDescription)
+        {
+            if (Win32Native.IsAdministrator()) return true;
+
+            DialogResult dr = MessageBox.Show(
+                this,
+                string.Format("{0} requires administrative privileges.\n\nWould you like to restart WinTime as Administrator?", actionDescription),
+                "Administrator Elevation Required",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+
+            if (dr == DialogResult.Yes)
+            {
+                try
+                {
+                    ProcessStartInfo psi = new ProcessStartInfo(Application.ExecutablePath)
+                    {
+                        Verb = "runas",
+                        UseShellExecute = true
+                    };
+                    Process.Start(psi);
+                    Application.Exit();
+                }
+                catch (Exception ex)
+                {
+                    Log("[✗] Elevation canceled or failed: " + ex.Message, Theme.AccentRed);
+                }
+            }
+            return false;
+        }
+
+        private void SetActionButtonsState(bool enabled)
+        {
+            if (this.InvokeRequired)
+            {
+                this.Invoke(new Action(() => SetActionButtonsState(enabled)));
+                return;
+            }
+
+            if (btnRdr2 != null) btnRdr2.Enabled = enabled;
+            if (btnApplyCustom != null) btnApplyCustom.Enabled = enabled;
+            if (btnNow != null) btnNow.Enabled = enabled;
+            if (rowSync != null) rowSync.SetButtonEnabled(enabled);
+            if (rowGlobal != null) rowGlobal.SetButtonEnabled(enabled);
+            if (btnAddHost != null) btnAddHost.Enabled = enabled;
+            if (btnPresetAll5 != null) btnPresetAll5.Enabled = enabled;
+            if (btnPresetGlobal != null) btnPresetGlobal.Enabled = enabled;
+            if (btnPresetDefault != null) btnPresetDefault.Enabled = enabled;
+            if (btnTestPeers != null) btnTestPeers.Enabled = enabled;
+            if (pnlPeersList != null) pnlPeersList.Enabled = enabled;
         }
 
         protected override void OnHandleCreated(EventArgs e)
@@ -817,7 +900,7 @@ namespace WindowsTimeManager
         private void InitializeComponent()
         {
             // Standard Native Windows Form Properties
-            this.Text = "WinTime v0.1.1 (Alpha) - Windows Time & NTP Manager";
+            this.Text = "WinTime v0.1.3 (Alpha) - Windows Time & NTP Manager";
             try { this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch {}
             this.ClientSize = new Size(1000, 740);
             this.MinimumSize = new Size(920, 700);
@@ -844,6 +927,30 @@ namespace WindowsTimeManager
                     Win32Native.SendMessage(this.Handle, Win32Native.WM_NCLBUTTONDOWN, Win32Native.HTCAPTION, 0);
                 }
             };
+
+            if (!Win32Native.IsAdministrator())
+            {
+                btnElevate = new Button()
+                {
+                    Text = "🛡️ Restart as Admin",
+                    Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+                    Size = new Size(160, 32),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.FromArgb(70, 30, 20),
+                    ForeColor = Theme.AccentOrange,
+                    Cursor = Cursors.Hand
+                };
+                btnElevate.FlatAppearance.BorderColor = Theme.AccentOrange;
+                btnElevate.Click += (s, e) => EnsureAdminOrPrompt("WinTime Administrative Access");
+                actionToolTip.SetToolTip(btnElevate, "Click to restart WinTime with elevated Administrator permissions.");
+
+                Action reposElevate = () => {
+                    btnElevate.Location = new Point(navBar.Width - btnElevate.Width - 16, (navBar.Height - btnElevate.Height) / 2);
+                };
+                navBar.Resize += (s, e) => reposElevate();
+                reposElevate();
+                navBar.Controls.Add(btnElevate);
+            }
 
             tabDashboard = new NavTabButton("Time & Actions", "clock") { Location = new Point(16, 2) };
             tabDashboard.Click += (s, e) => SwitchTab("dashboard");
@@ -1225,22 +1332,48 @@ namespace WindowsTimeManager
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
 
-            Button btnAll5 = CreatePresetButton("⭐ All 5 (Iran-Optimized)", Color.FromArgb(50, 40, 20), Theme.AccentYellow, () => {
+            btnPresetAll5 = CreatePresetButton("⭐ All 5 (Iran-Optimized)", Color.FromArgb(50, 40, 20), Theme.AccentYellow, () => {
                 List<string> five = new List<string>() { "time.windows.com,0x8", "pool.ntp.org,0x8", "time.cloudflare.com,0x8", "time.digiboy.ir,0x8", "ntp.iranet.ir,0x8" };
-                return ApplyPeerList(five);
+                string errMsg;
+                bool ok = ApplyPeerList(five, out errMsg);
+                return new Tuple<bool, string>(ok, errMsg);
             });
 
-            Button btnGlobal = CreatePresetButton("🌐 Global Only (3 Servers)", Color.FromArgb(22, 50, 72), Theme.AccentCyan, () => {
+            btnPresetGlobal = CreatePresetButton("🌐 Global Only (3 Servers)", Color.FromArgb(22, 50, 72), Theme.AccentCyan, () => {
                 List<string> three = new List<string>() { "time.windows.com,0x8", "pool.ntp.org,0x8", "time.cloudflare.com,0x8" };
-                return ApplyPeerList(three);
+                string errMsg;
+                bool ok = ApplyPeerList(three, out errMsg);
+                return new Tuple<bool, string>(ok, errMsg);
             });
 
-            Button btnDefault = CreatePresetButton("🪟 Windows Default Only", Theme.BgControl, Theme.TextSecondary, () => {
+            btnPresetDefault = CreatePresetButton("🪟 Windows Default Only", Theme.BgControl, Theme.TextSecondary, () => {
                 List<string> one = new List<string>() { "time.windows.com,0x8" };
-                return ApplyPeerList(one);
+                string errMsg;
+                bool ok = ApplyPeerList(one, out errMsg);
+                return new Tuple<bool, string>(ok, errMsg);
             });
 
-            pnlPresets.Controls.AddRange(new Control[] { btnAll5, btnGlobal, btnDefault });
+            chkAllowDomainOverride = new CheckBox()
+            {
+                Text = "Allow AD Domain Override",
+                Font = new Font("Segoe UI", 9F),
+                ForeColor = Theme.TextSecondary,
+                BackColor = Color.Transparent,
+                AutoSize = true,
+                Cursor = Cursors.Hand,
+                Margin = new Padding(12, 8, 0, 0)
+            };
+            string domName;
+            if (NativeMethods.IsDomainJoined(out domName))
+            {
+                chkAllowDomainOverride.Text = "Allow AD Override (" + domName + ")";
+            }
+            if (actionToolTip != null)
+            {
+                actionToolTip.SetToolTip(chkAllowDomainOverride, "Allows updating manual NTP peers on domain-joined machines even if Active Directory Group Policy is configured.");
+            }
+
+            pnlPresets.Controls.AddRange(new Control[] { btnPresetAll5, btnPresetGlobal, btnPresetDefault, chkAllowDomainOverride });
             pnlPeersView.Controls.Add(pnlPresets);
             currentY += 50;
 
@@ -1334,11 +1467,40 @@ namespace WindowsTimeManager
             this.Controls.Add(pnlPeersView);
         }
 
-        private void FlashAddHostButton(string text, Color bg, int durationMs = 2500)
+        private static string CategorizePeerError(string msg)
+        {
+            if (string.IsNullOrEmpty(msg)) return "✗ Failed";
+            if (msg.IndexOf("domain", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                msg.IndexOf("Active Directory", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "✗ Domain Policy";
+            if (msg.IndexOf("admin", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                msg.IndexOf("privilege", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                msg.IndexOf("elevation", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                msg.IndexOf("1300", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "✗ Need Admin!";
+            if (msg.IndexOf("timeout", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                msg.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "✗ Timeout";
+            if (msg.IndexOf("service", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                msg.IndexOf("w32time", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "✗ Service Error";
+            if (msg.IndexOf("empty", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                msg.IndexOf("valid", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "✗ Invalid Peers";
+            return "✗ Failed";
+        }
+
+        private void FlashAddHostButton(string text, Color bg, int durationMs = 2500, string tooltipMsg = null)
         {
             btnAddHost.Enabled = false;
             btnAddHost.Text = text;
             btnAddHost.BackColor = bg;
+            btnAddHost.ForeColor = Color.White;
+            if (!string.IsNullOrEmpty(tooltipMsg) && actionToolTip != null)
+            {
+                actionToolTip.SetToolTip(btnAddHost, tooltipMsg.Length > 80 ? tooltipMsg.Substring(0, 80) + "..." : tooltipMsg);
+            }
+
             System.Windows.Forms.Timer tm = new System.Windows.Forms.Timer();
             tm.Interval = durationMs;
             tm.Tick += (s, e) => {
@@ -1347,6 +1509,8 @@ namespace WindowsTimeManager
                 btnAddHost.Enabled = true;
                 btnAddHost.Text = "+ Add & Test Server";
                 btnAddHost.BackColor = Color.FromArgb(20, 56, 36);
+                btnAddHost.ForeColor = Theme.AccentGreen;
+                if (actionToolTip != null) actionToolTip.SetToolTip(btnAddHost, null);
             };
             tm.Start();
         }
@@ -1354,6 +1518,8 @@ namespace WindowsTimeManager
         // --- Add Server Validation & Testing Logic with Interactive Feedback ---
         private void ValidateAndAddCustomPeer()
         {
+            if (!EnsureAdminOrPrompt("Adding custom NTP peer")) return;
+
             string raw = txtCustomHost.Text.Trim();
             if (string.IsNullOrEmpty(raw))
             {
@@ -1366,13 +1532,18 @@ namespace WindowsTimeManager
             if (!val.IsValid)
             {
                 Log("[✗] VALIDATION ERROR: " + val.ErrorMessage, Theme.AccentRed);
-                FlashAddHostButton("✗ Invalid Peer", Color.FromArgb(95, 25, 25), 3000);
+                FlashAddHostButton("✗ Invalid Peer", Color.FromArgb(95, 25, 25), 3000, val.ErrorMessage);
                 return;
             }
             string normHost = val.CleanHost;
 
-            // 3. DNS Resolution and Connectivity Test in Background
-            btnAddHost.Enabled = false;
+            if (!_operationLock.Wait(0))
+            {
+                Log("[!] Another operation is already in progress.", Theme.AccentYellow);
+                return;
+            }
+
+            SetActionButtonsState(false);
             btnAddHost.Text = "⏳ Testing DNS & NTP...";
             btnAddHost.BackColor = Color.FromArgb(35, 45, 60);
             Log("Testing server reachability: " + normHost + " ...");
@@ -1389,7 +1560,7 @@ namespace WindowsTimeManager
                     catch
                     {
                         this.Invoke(new Action(() => {
-                            FlashAddHostButton("✗ Host Not Found (DNS Error)", Color.FromArgb(95, 25, 25), 3000);
+                            FlashAddHostButton("✗ DNS Error", Color.FromArgb(95, 25, 25), 3000, "DNS could not resolve hostname " + normHost);
                             Log("[✗] DNS RESOLUTION FAILED: Hostname '" + normHost + "' does not exist or DNS could not resolve it.", Theme.AccentRed);
                         }));
                         return;
@@ -1398,7 +1569,7 @@ namespace WindowsTimeManager
                     if (addresses == null || addresses.Length == 0)
                     {
                         this.Invoke(new Action(() => {
-                            FlashAddHostButton("✗ No IP Found", Color.FromArgb(95, 25, 25));
+                            FlashAddHostButton("✗ No IP Found", Color.FromArgb(95, 25, 25), 3000, "No IP address found for " + normHost);
                             Log("[✗] DNS ERROR: No IP address found for '" + normHost + "'.", Theme.AccentRed);
                         }));
                         return;
@@ -1435,13 +1606,14 @@ namespace WindowsTimeManager
 
                         if (alreadyExists)
                         {
-                            FlashAddHostButton("✗ Already in List", Color.FromArgb(95, 25, 25));
+                            FlashAddHostButton("✗ Already in List", Color.FromArgb(95, 25, 25), 2500, "Server is already in your configured peers list.");
                             Log("[!] Server '" + normHost + "' is already in your configured peers list.", Theme.AccentYellow);
                         }
                         else
                         {
                             updatedList.Add(normHost + ",0x8");
-                            bool ok = ApplyPeerList(updatedList);
+                            string applyErr;
+                            bool ok = ApplyPeerList(updatedList, out applyErr);
                             if (ok)
                             {
                                 txtCustomHost.Clear();
@@ -1449,7 +1621,7 @@ namespace WindowsTimeManager
                             }
                             else
                             {
-                                FlashAddHostButton("✗ Need Admin!", Color.FromArgb(95, 25, 25));
+                                FlashAddHostButton(CategorizePeerError(applyErr), Color.FromArgb(95, 25, 25), 3000, applyErr);
                             }
                         }
                     }));
@@ -1457,14 +1629,21 @@ namespace WindowsTimeManager
                 catch (Exception ex)
                 {
                     this.Invoke(new Action(() => {
-                        FlashAddHostButton("✗ Error: " + ex.Message, Color.FromArgb(95, 25, 25));
+                        FlashAddHostButton("✗ Error", Color.FromArgb(95, 25, 25), 3000, ex.Message);
                         Log("[✗] Error validating server: " + ex.Message, Theme.AccentRed);
+                    }));
+                }
+                finally
+                {
+                    this.Invoke(new Action(() => {
+                        SetActionButtonsState(true);
+                        _operationLock.Release();
                     }));
                 }
             });
         }
 
-        private Button CreatePresetButton(string text, Color bg, Color fg, Func<bool> onClick)
+        private Button CreatePresetButton(string text, Color bg, Color fg, Func<Tuple<bool, string>> onClick)
         {
             Button btn = new Button()
             {
@@ -1481,13 +1660,36 @@ namespace WindowsTimeManager
             btn.FlatAppearance.BorderSize = 1;
             btn.FlatAppearance.BorderColor = fg;
             btn.Click += (s, e) => {
-                btn.Enabled = false;
+                if (!EnsureAdminOrPrompt("Applying NTP server presets")) return;
+
+                if (!_operationLock.Wait(0))
+                {
+                    Log("[!] Another operation is already in progress.", Theme.AccentYellow);
+                    return;
+                }
+
+                SetActionButtonsState(false);
                 string orig = btn.Text;
                 btn.Text = "⏳ Applying...";
+
                 ThreadPool.QueueUserWorkItem((state) => {
-                    bool ok = onClick();
+                    Tuple<bool, string> res = null;
+                    try
+                    {
+                        res = onClick();
+                    }
+                    catch (Exception ex)
+                    {
+                        res = new Tuple<bool, string>(false, ex.Message);
+                    }
+
                     this.Invoke(new Action(() => {
-                        btn.Enabled = true;
+                        SetActionButtonsState(true);
+                        _operationLock.Release();
+
+                        bool ok = res != null && res.Item1;
+                        string msg = res != null ? res.Item2 : string.Empty;
+
                         if (ok)
                         {
                             btn.Text = "✓ Applied!";
@@ -1496,19 +1698,24 @@ namespace WindowsTimeManager
                         }
                         else
                         {
-                            btn.Text = "✗ Failed (Admin?)";
+                            btn.Text = CategorizePeerError(msg);
                             btn.BackColor = Color.FromArgb(95, 25, 25);
                             btn.ForeColor = Color.White;
+                            if (actionToolTip != null && !string.IsNullOrEmpty(msg))
+                            {
+                                actionToolTip.SetToolTip(btn, msg.Length > 80 ? msg.Substring(0, 80) + "..." : msg);
+                            }
                         }
 
                         System.Windows.Forms.Timer t = new System.Windows.Forms.Timer();
-                        t.Interval = 2000;
+                        t.Interval = 2500;
                         t.Tick += (ts, te) => {
                             t.Stop();
                             t.Dispose();
                             btn.Text = orig;
                             btn.BackColor = bg;
                             btn.ForeColor = fg;
+                            if (actionToolTip != null) actionToolTip.SetToolTip(btn, null);
                         };
                         t.Start();
                     }));
@@ -1517,10 +1724,11 @@ namespace WindowsTimeManager
             return btn;
         }
 
-        private bool ApplyPeerList(List<string> peers)
+        private bool ApplyPeerList(List<string> peers, out string errorMsg)
         {
-            string msg;
-            bool ok = TimeServiceHelper.SetSystemPeers(peers, out msg);
+            bool allowDomain = chkAllowDomainOverride != null && chkAllowDomainOverride.Checked;
+            bool ok = TimeServiceHelper.SetSystemPeers(peers, allowDomain, out errorMsg);
+            string msg = errorMsg;
             Action act = () => {
                 if (ok)
                 {
@@ -1535,6 +1743,12 @@ namespace WindowsTimeManager
             if (this.InvokeRequired) this.Invoke(act);
             else act();
             return ok;
+        }
+
+        private bool ApplyPeerList(List<string> peers)
+        {
+            string err;
+            return ApplyPeerList(peers, out err);
         }
 
         // =====================================================================
@@ -1782,6 +1996,8 @@ namespace WindowsTimeManager
 
         private void RemovePeer(string hostToRemove, Panel row, Button btnDelete, Label lblStatus)
         {
+            if (!EnsureAdminOrPrompt("Removing NTP peer")) return;
+
             var existing = TimeServiceHelper.GetSystemPeers();
             List<string> newList = new List<string>();
             foreach (var p in existing)
@@ -1831,7 +2047,26 @@ namespace WindowsTimeManager
             tm.Tick += (s, e) => {
                 tm.Stop();
                 tm.Dispose();
-                ApplyPeerList(newList);
+                if (!_operationLock.Wait(0))
+                {
+                    Log("[!] Another operation is already in progress.", Theme.AccentYellow);
+                    return;
+                }
+                SetActionButtonsState(false);
+                ThreadPool.QueueUserWorkItem((st) => {
+                    try
+                    {
+                        string applyErr;
+                        ApplyPeerList(newList, out applyErr);
+                    }
+                    finally
+                    {
+                        this.Invoke(new Action(() => {
+                            SetActionButtonsState(true);
+                            _operationLock.Release();
+                        }));
+                    }
+                });
             };
             tm.Start();
         }
@@ -1847,6 +2082,8 @@ namespace WindowsTimeManager
         // =====================================================================
         private void ActionSetRdr2()
         {
+            if (!EnsureAdminOrPrompt("Applying RDR2 Time Shift")) return;
+
             DialogResult dr = MessageBox.Show(
                 this,
                 "Changing the system clock to October 15, 2019 (RDR2 launch workaround) will affect HTTPS/TLS certificate verification, active browser sessions, and background services until restored.\n\nDo you want to continue?",
@@ -1860,43 +2097,62 @@ namespace WindowsTimeManager
                 return;
             }
 
-            btnRdr2.Enabled = false;
+            if (!_operationLock.Wait(0))
+            {
+                Log("[!] Another operation is already in progress.", Theme.AccentYellow);
+                return;
+            }
+
+            SetActionButtonsState(false);
             btnRdr2.Text = "⏳ Setting Clock...";
             ThreadPool.QueueUserWorkItem((state) => {
-                Log("Applying RDR2 Preset time (2019-10-15 21:31:00)...");
-                DateTime dtLocal = new DateTime(2019, 10, 15, 21, 31, 0, DateTimeKind.Local);
-                string err;
-                bool ok = NativeMethods.SetSystemClockUtc(dtLocal.ToUniversalTime(), out err);
-                this.Invoke(new Action(() => {
-                    btnRdr2.Enabled = true;
-                    if (ok)
-                    {
-                        Log("[✓] SUCCESS: RDR2 fixed time (2019-10-15 21:31:00) applied successfully!", Theme.AccentGreen);
-                        btnRdr2.Text = "✓ RDR2 Applied!";
-                        btnRdr2.BackColor = Color.FromArgb(20, 85, 45);
-                    }
-                    else
-                    {
-                        Log("[✗] ERROR: Failed to apply RDR2 time: " + err, Theme.AccentRed);
-                        btnRdr2.Text = "✗ Need Admin!";
-                        btnRdr2.BackColor = Color.FromArgb(95, 25, 25);
-                    }
+                try
+                {
+                    Log("Applying RDR2 Preset time (2019-10-15 21:31:00)...");
+                    DateTime dtLocal = new DateTime(2019, 10, 15, 21, 31, 0, DateTimeKind.Local);
+                    string err;
+                    bool ok = NativeMethods.SetSystemClockUtc(dtLocal.ToUniversalTime(), out err);
+                    this.Invoke(new Action(() => {
+                        if (ok)
+                        {
+                            Log("[✓] SUCCESS: RDR2 fixed time (2019-10-15 21:31:00) applied successfully!", Theme.AccentGreen);
+                            btnRdr2.Text = "✓ RDR2 Applied!";
+                            btnRdr2.BackColor = Color.FromArgb(20, 85, 45);
+                        }
+                        else
+                        {
+                            Log("[✗] ERROR: Failed to apply RDR2 time: " + err, Theme.AccentRed);
+                            btnRdr2.Text = "✗ Failed!";
+                            btnRdr2.BackColor = Color.FromArgb(95, 25, 25);
+                            if (actionToolTip != null && !string.IsNullOrEmpty(err)) actionToolTip.SetToolTip(btnRdr2, err);
+                        }
 
-                    System.Windows.Forms.Timer tmr = new System.Windows.Forms.Timer();
-                    tmr.Interval = 2500;
-                    tmr.Tick += (ts, te) => {
-                        tmr.Stop();
-                        tmr.Dispose();
-                        btnRdr2.Text = "⚡ Set RDR2 Time";
-                        btnRdr2.BackColor = Color.FromArgb(50, 32, 20);
-                    };
-                    tmr.Start();
-                }));
+                        System.Windows.Forms.Timer tmr = new System.Windows.Forms.Timer();
+                        tmr.Interval = 2500;
+                        tmr.Tick += (ts, te) => {
+                            tmr.Stop();
+                            tmr.Dispose();
+                            btnRdr2.Text = "⚡ Set RDR2 Time";
+                            btnRdr2.BackColor = Color.FromArgb(50, 32, 20);
+                            if (actionToolTip != null) actionToolTip.SetToolTip(btnRdr2, null);
+                        };
+                        tmr.Start();
+                    }));
+                }
+                finally
+                {
+                    this.Invoke(new Action(() => {
+                        SetActionButtonsState(true);
+                        _operationLock.Release();
+                    }));
+                }
             });
         }
 
         private void ActionSetCustom()
         {
+            if (!EnsureAdminOrPrompt("Setting custom system time")) return;
+
             DateTime d = dtpCustomDate.Value;
             DateTime t = dtpCustomTime.Value;
             DateTime targetLocal = new DateTime(d.Year, d.Month, d.Day, t.Hour, t.Minute, t.Second, DateTimeKind.Local);
@@ -1917,107 +2173,144 @@ namespace WindowsTimeManager
                 }
             }
 
-            btnApplyCustom.Enabled = false;
+            if (!_operationLock.Wait(0))
+            {
+                Log("[!] Another operation is already in progress.", Theme.AccentYellow);
+                return;
+            }
+
+            SetActionButtonsState(false);
             btnApplyCustom.Text = "⏳ Applying...";
 
             ThreadPool.QueueUserWorkItem((state) => {
-                string targetStr = targetLocal.ToString("yyyy-MM-dd HH:mm:ss");
-                Log("Applying custom time: " + targetStr);
-                string err;
-                bool ok = NativeMethods.SetSystemClockUtc(targetLocal.ToUniversalTime(), out err);
-                this.Invoke(new Action(() => {
-                    btnApplyCustom.Enabled = true;
-                    if (ok)
-                    {
-                        Log("[✓] SUCCESS: System time set to " + targetStr, Theme.AccentGreen);
-                        btnApplyCustom.Text = "✓ Time Applied!";
-                        btnApplyCustom.BackColor = Color.FromArgb(20, 85, 45);
-                    }
-                    else
-                    {
-                        Log("[✗] ERROR: Failed to set custom time: " + err, Theme.AccentRed);
-                        btnApplyCustom.Text = "✗ Failed (Need Admin)!";
-                        btnApplyCustom.BackColor = Color.FromArgb(95, 25, 25);
-                    }
+                try
+                {
+                    string targetStr = targetLocal.ToString("yyyy-MM-dd HH:mm:ss");
+                    Log("Applying custom time: " + targetStr);
+                    string err;
+                    bool ok = NativeMethods.SetSystemClockUtc(targetLocal.ToUniversalTime(), out err);
+                    this.Invoke(new Action(() => {
+                        if (ok)
+                        {
+                            Log("[✓] SUCCESS: System time set to " + targetStr, Theme.AccentGreen);
+                            btnApplyCustom.Text = "✓ Time Applied!";
+                            btnApplyCustom.BackColor = Color.FromArgb(20, 85, 45);
+                        }
+                        else
+                        {
+                            Log("[✗] ERROR: Failed to set custom time: " + err, Theme.AccentRed);
+                            btnApplyCustom.Text = "✗ Failed!";
+                            btnApplyCustom.BackColor = Color.FromArgb(95, 25, 25);
+                            if (actionToolTip != null && !string.IsNullOrEmpty(err)) actionToolTip.SetToolTip(btnApplyCustom, err);
+                        }
 
-                    System.Windows.Forms.Timer tmr = new System.Windows.Forms.Timer();
-                    tmr.Interval = 2500;
-                    tmr.Tick += (ts, te) => {
-                        tmr.Stop();
-                        tmr.Dispose();
-                        btnApplyCustom.Text = "✓ Apply Custom Time";
-                        btnApplyCustom.BackColor = Color.FromArgb(22, 60, 38);
-                    };
-                    tmr.Start();
-                }));
+                        System.Windows.Forms.Timer tmr = new System.Windows.Forms.Timer();
+                        tmr.Interval = 2500;
+                        tmr.Tick += (ts, te) => {
+                            tmr.Stop();
+                            tmr.Dispose();
+                            btnApplyCustom.Text = "✓ Apply Custom Time";
+                            btnApplyCustom.BackColor = Color.FromArgb(22, 60, 38);
+                            if (actionToolTip != null) actionToolTip.SetToolTip(btnApplyCustom, null);
+                        };
+                        tmr.Start();
+                    }));
+                }
+                finally
+                {
+                    this.Invoke(new Action(() => {
+                        SetActionButtonsState(true);
+                        _operationLock.Release();
+                    }));
+                }
             });
         }
 
         private void ActionSyncSystemPeers()
         {
+            if (!EnsureAdminOrPrompt("Synchronizing Windows Time service")) return;
+
+            if (!_operationLock.Wait(0))
+            {
+                Log("[!] Another operation is already in progress.", Theme.AccentYellow);
+                return;
+            }
+
+            SetActionButtonsState(false);
             rowSync.SetLoading("⏳ Resyncing w32tm...");
+
             ThreadPool.QueueUserWorkItem((state) => {
-                Log("Triggering Windows Time service synchronization (w32tm /resync)...");
-                string w32Out;
-                bool ok = TimeServiceManager.Resync(out w32Out);
-
-                if (ok)
+                try
                 {
-                    this.Invoke(new Action(() => {
-                        Log("[✓] SUCCESS: Time synchronized via Windows Time service (w32tm)!", Theme.AccentGreen);
-                        rowSync.SetResult(true, "✓ Synchronized!");
-                    }));
-                    return;
-                }
+                    Log("Triggering Windows Time service synchronization (w32tm /resync)...");
+                    string w32Out;
+                    bool ok = TimeServiceManager.Resync(out w32Out);
 
-                Log("[!] w32tm resync returned failure/notice: " + (string.IsNullOrEmpty(w32Out) ? "exit code error" : w32Out.Trim()));
-                Log("  Falling back to direct SNTP consensus sync from configured registry peers...");
-
-                string syncType, activeSource;
-                var peers = TimeServiceManager.GetSystemPeers(out syncType, out activeSource);
-                List<string> peerHosts = new List<string>();
-                foreach (var p in peers)
-                {
-                    if (!string.IsNullOrEmpty(p.Host) && !p.Host.Contains("?"))
+                    if (ok)
                     {
-                        peerHosts.Add(p.Host);
+                        this.Invoke(new Action(() => {
+                            Log("[✓] SUCCESS: Time synchronized via Windows Time service (w32tm)!", Theme.AccentGreen);
+                            rowSync.SetResult(true, "✓ Synchronized!");
+                        }));
+                        return;
+                    }
+
+                    Log("[!] w32tm resync returned failure/notice: " + (string.IsNullOrEmpty(w32Out) ? "exit code error" : w32Out.Trim()));
+                    Log("  Falling back to direct SNTP consensus sync from configured registry peers...");
+
+                    string syncType, activeSource;
+                    var peers = TimeServiceManager.GetSystemPeers(out syncType, out activeSource);
+                    List<string> peerHosts = new List<string>();
+                    foreach (var p in peers)
+                    {
+                        if (!string.IsNullOrEmpty(p.Host) && !p.Host.Contains("?"))
+                        {
+                            peerHosts.Add(p.Host);
+                        }
+                    }
+
+                    if (peerHosts.Count == 0)
+                    {
+                        this.Invoke(new Action(() => {
+                            Log("[✗] No valid peers configured in Windows Time service registry to query.", Theme.AccentRed);
+                            rowSync.SetResult(false, "✗ No Valid Peers!");
+                        }));
+                        return;
+                    }
+
+                    MultiNtpQueryResult multiRes = NtpClient.QueryMultipleSources(peerHosts.ToArray(), 2500);
+                    if (multiRes.Success)
+                    {
+                        string err;
+                        bool clockOk = NativeMethods.SetSystemClockUtc(multiRes.SelectedUtcTime, out err);
+                        this.Invoke(new Action(() => {
+                            if (clockOk)
+                            {
+                                int total = multiRes.SuccessfulResults.Count + multiRes.FailedResults.Count;
+                                Log(string.Format("[✓] SUCCESS: Direct SNTP consensus applied from {0}/{1} peers (Median Offset: {2:F1}ms)",
+                                    multiRes.SuccessfulResults.Count, total, multiRes.MedianOffset.TotalMilliseconds), Theme.AccentGreen);
+                                rowSync.SetResult(true, "✓ Synced (SNTP)!");
+                            }
+                            else
+                            {
+                                Log("[✗] ERROR applying time: " + err, Theme.AccentRed);
+                                rowSync.SetResult(false, "✗ Sync Failed!");
+                            }
+                        }));
+                    }
+                    else
+                    {
+                        this.Invoke(new Action(() => {
+                            Log("[✗] ERROR: Direct peer sync failed. " + multiRes.Summary, Theme.AccentRed);
+                            rowSync.SetResult(false, "✗ Sync Failed!");
+                        }));
                     }
                 }
-
-                if (peerHosts.Count == 0)
+                finally
                 {
                     this.Invoke(new Action(() => {
-                        Log("[✗] No valid peers configured in Windows Time service registry to query.", Theme.AccentRed);
-                        rowSync.SetResult(false, "✗ No Valid Peers!");
-                    }));
-                    return;
-                }
-
-                MultiNtpQueryResult multiRes = NtpClient.QueryMultipleSources(peerHosts.ToArray(), 2500);
-                if (multiRes.Success)
-                {
-                    string err;
-                    bool clockOk = NativeMethods.SetSystemClockUtc(multiRes.SelectedUtcTime, out err);
-                    this.Invoke(new Action(() => {
-                        if (clockOk)
-                        {
-                            int total = multiRes.SuccessfulResults.Count + multiRes.FailedResults.Count;
-                            Log(string.Format("[✓] SUCCESS: Direct SNTP consensus applied from {0}/{1} peers (Median Offset: {2:F1}ms)",
-                                multiRes.SuccessfulResults.Count, total, multiRes.MedianOffset.TotalMilliseconds), Theme.AccentGreen);
-                            rowSync.SetResult(true, "✓ Synced (SNTP)!");
-                        }
-                        else
-                        {
-                            Log("[✗] ERROR applying time: " + err, Theme.AccentRed);
-                            rowSync.SetResult(false, "✗ Need Admin!");
-                        }
-                    }));
-                }
-                else
-                {
-                    this.Invoke(new Action(() => {
-                        Log("[✗] ERROR: Direct peer sync failed. " + multiRes.Summary, Theme.AccentRed);
-                        rowSync.SetResult(false, "✗ Sync Failed!");
+                        SetActionButtonsState(true);
+                        _operationLock.Release();
                     }));
                 }
             });
@@ -2025,83 +2318,103 @@ namespace WindowsTimeManager
 
         private void ActionSyncGlobal()
         {
+            if (!EnsureAdminOrPrompt("Synchronizing system clock")) return;
+
+            if (!_operationLock.Wait(0))
+            {
+                Log("[!] Another operation is already in progress.", Theme.AccentYellow);
+                return;
+            }
+
+            SetActionButtonsState(false);
             rowGlobal.SetLoading("⏳ Querying Global NTP...");
+
             ThreadPool.QueueUserWorkItem((state) => {
-                Log("Starting Global NTP consensus synchronization (Stratum 1/2 servers)...");
-                string[] globalServers = new string[] {
-                    "time.cloudflare.com",
-                    "time.google.com",
-                    "pool.ntp.org",
-                    "time.windows.com",
-                    "time.aws.com"
-                };
-
-                MultiNtpQueryResult multiRes = NtpClient.QueryMultipleSources(globalServers, 2500);
-                if (multiRes.Success)
+                try
                 {
-                    string err;
-                    bool clockOk = NativeMethods.SetSystemClockUtc(multiRes.SelectedUtcTime, out err);
-                    this.Invoke(new Action(() => {
-                        if (clockOk)
-                        {
-                            int total = multiRes.SuccessfulResults.Count + multiRes.FailedResults.Count;
-                            Log(string.Format("[✓] SUCCESS: Clock synchronized via Global NTP consensus ({0}/{1} servers, Median Offset: {2:F1}ms)",
-                                multiRes.SuccessfulResults.Count, total, multiRes.MedianOffset.TotalMilliseconds), Theme.AccentGreen);
-                            rowGlobal.SetResult(true, "✓ Synced (NTP)!");
-                        }
-                        else
-                        {
-                            Log("[✗] ERROR applying clock: " + err, Theme.AccentRed);
-                            rowGlobal.SetResult(false, "✗ Need Admin!");
-                        }
-                    }));
-                    return;
-                }
+                    Log("Starting Global NTP consensus synchronization (Stratum 1/2 servers)...");
+                    string[] globalServers = new string[] {
+                        "time.cloudflare.com",
+                        "time.google.com",
+                        "pool.ntp.org",
+                        "time.windows.com",
+                        "time.aws.com"
+                    };
 
-                Log("[!] Global NTP failed or UDP 123 blocked: " + multiRes.Summary);
-                Log("  Falling back to HTTPS Date header sync (Port 443, ~1s precision)...");
-
-                string[] httpsTargets = new string[] {
-                    "https://www.google.com",
-                    "https://cloudflare.com",
-                    "https://www.microsoft.com"
-                };
-
-                bool httpsSuccess = false;
-                foreach (string tgt in httpsTargets)
-                {
-                    Log("  Querying HTTPS: " + tgt + " ...");
-                    HttpsTimeResult hRes = HttpsTimeClient.QueryHttpDate(tgt, 4000);
-                    if (hRes.Success)
+                    MultiNtpQueryResult multiRes = NtpClient.QueryMultipleSources(globalServers, 2500);
+                    if (multiRes.Success)
                     {
                         string err;
-                        bool clockOk = NativeMethods.SetSystemClockUtc(hRes.UtcTime, out err);
+                        bool clockOk = NativeMethods.SetSystemClockUtc(multiRes.SelectedUtcTime, out err);
                         this.Invoke(new Action(() => {
                             if (clockOk)
                             {
-                                Log(string.Format("[✓] SUCCESS: Clock synchronized via HTTPS Date header from {0} ({1}ms latency, ~1s granularity)", tgt, hRes.LatencyMs), Theme.AccentGreen);
-                                rowGlobal.SetResult(true, "✓ Synced (HTTPS)!");
+                                int total = multiRes.SuccessfulResults.Count + multiRes.FailedResults.Count;
+                                Log(string.Format("[✓] SUCCESS: Clock synchronized via Global NTP consensus ({0}/{1} servers, Median Offset: {2:F1}ms)",
+                                    multiRes.SuccessfulResults.Count, total, multiRes.MedianOffset.TotalMilliseconds), Theme.AccentGreen);
+                                rowGlobal.SetResult(true, "✓ Synced (NTP)!");
                             }
                             else
                             {
                                 Log("[✗] ERROR applying clock: " + err, Theme.AccentRed);
-                                rowGlobal.SetResult(false, "✗ Need Admin!");
+                                rowGlobal.SetResult(false, "✗ Sync Failed!");
                             }
                         }));
-                        httpsSuccess = true;
-                        break;
+                        return;
                     }
-                    else
+
+                    Log("[!] Global NTP failed or UDP 123 blocked: " + multiRes.Summary);
+                    Log("  Falling back to HTTPS Date header sync (Port 443, ~1s precision)...");
+
+                    string[] httpsTargets = new string[] {
+                        "https://www.google.com",
+                        "https://cloudflare.com",
+                        "https://www.microsoft.com"
+                    };
+
+                    bool httpsSuccess = false;
+                    foreach (string tgt in httpsTargets)
                     {
-                        Log("  " + tgt + " failed: " + hRes.ErrorMessage, Theme.AccentYellow);
+                        Log("  Querying HTTPS: " + tgt + " ...");
+                        HttpsTimeResult hRes = HttpsTimeClient.QueryHttpDate(tgt, 4000);
+                        if (hRes.Success)
+                        {
+                            string err;
+                            bool clockOk = NativeMethods.SetSystemClockUtc(hRes.UtcTime, out err);
+                            this.Invoke(new Action(() => {
+                                if (clockOk)
+                                {
+                                    Log(string.Format("[✓] SUCCESS: Clock synchronized via HTTPS Date header from {0} ({1}ms latency, ~1s granularity)", tgt, hRes.LatencyMs), Theme.AccentGreen);
+                                    rowGlobal.SetResult(true, "✓ Synced (HTTPS)!");
+                                }
+                                else
+                                {
+                                    Log("[✗] ERROR applying clock: " + err, Theme.AccentRed);
+                                    rowGlobal.SetResult(false, "✗ Sync Failed!");
+                                }
+                            }));
+                            httpsSuccess = true;
+                            break;
+                        }
+                        else
+                        {
+                            Log("  " + tgt + " failed: " + hRes.ErrorMessage, Theme.AccentYellow);
+                        }
+                    }
+
+                    if (!httpsSuccess)
+                    {
+                        this.Invoke(new Action(() => {
+                            Log("[✗] ERROR: Both Global NTP and HTTPS Date fallbacks failed. Check network connection and TLS certificates.", Theme.AccentRed);
+                            rowGlobal.SetResult(false, "✗ Sync Failed!");
+                        }));
                     }
                 }
-
-                if (!httpsSuccess)
+                finally
                 {
                     this.Invoke(new Action(() => {
-                        Log("[✗] ERROR: Both Global NTP and HTTPS Date fallbacks failed. Check network connection and TLS certificates.", Theme.AccentRed);
-                        rowGlobal.SetResult(false, "✗ Sync Failed!");
+                        SetActionButtonsState(true);
+                        _operationLock.Release();
                     }));
                 }
             });
@@ -2109,7 +2422,13 @@ namespace WindowsTimeManager
 
         private void ActionTestPeers()
         {
-            btnTestPeers.Enabled = false;
+            if (!_operationLock.Wait(0))
+            {
+                Log("[!] Another operation is already in progress.", Theme.AccentYellow);
+                return;
+            }
+
+            SetActionButtonsState(false);
             btnTestPeers.Text = "⏳ Testing Latencies...";
 
             ThreadPool.QueueUserWorkItem((state) => {
@@ -2165,7 +2484,6 @@ namespace WindowsTimeManager
                 finally
                 {
                     this.Invoke(new Action(() => {
-                        btnTestPeers.Enabled = true;
                         btnTestPeers.Text = "✓ Test Completed!";
                         btnTestPeers.BackColor = Color.FromArgb(20, 85, 45);
 
@@ -2178,6 +2496,9 @@ namespace WindowsTimeManager
                             btnTestPeers.BackColor = Color.FromArgb(22, 50, 72);
                         };
                         t.Start();
+
+                        SetActionButtonsState(true);
+                        _operationLock.Release();
                     }));
                 }
             });

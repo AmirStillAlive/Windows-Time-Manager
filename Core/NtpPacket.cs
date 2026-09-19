@@ -212,6 +212,12 @@ namespace WindowsTimeManager.Core
 
         #region Binary Timestamp Serialization Helpers
 
+        /// <summary>
+        /// Writes an RFC 4330 64-bit fixed-point timestamp (32-bit seconds, 32-bit fraction).
+        /// Note: The 32-bit seconds field counts seconds since 1900-01-01 00:00:00 UTC and
+        /// overflows on 2036-02-07 06:28:16 UTC (NTP Era 0 to Era 1 rollover). Timestamps
+        /// beyond this rollover wrap around modulo 2^32 into Era 1.
+        /// </summary>
         public static void WriteTimestamp(byte[] buffer, int offset, DateTime utcTime)
         {
             if (utcTime == DateTime.MinValue || utcTime <= NtpEpoch)
@@ -221,8 +227,10 @@ namespace WindowsTimeManager.Core
             }
 
             TimeSpan span = utcTime - NtpEpoch;
-            ulong totalSeconds = (ulong)Math.Max(0, span.TotalSeconds);
-            double fractionalSeconds = span.TotalSeconds - (double)totalSeconds;
+            ulong rawTotalSeconds = (ulong)Math.Max(0, span.TotalSeconds);
+            // Modulo 2^32 for Era 1 (after 2036 rollover)
+            ulong totalSeconds = rawTotalSeconds & 0xFFFFFFFFUL;
+            double fractionalSeconds = span.TotalSeconds - (double)rawTotalSeconds;
             ulong fraction = (ulong)(fractionalSeconds * 4294967296.0); // 2^32
 
             buffer[offset + 0] = (byte)((totalSeconds >> 24) & 0xFF);
@@ -236,6 +244,15 @@ namespace WindowsTimeManager.Core
             buffer[offset + 7] = (byte)(fraction & 0xFF);
         }
 
+        /// <summary>
+        /// Reads an RFC 4330 64-bit fixed-point timestamp (32-bit seconds, 32-bit fraction).
+        /// Protocol Limitation & Era-Inference Heuristic (RFC 4330 Section 3 / RFC 5905):
+        /// The standard NTP 32-bit unsigned seconds field overflows on 2036-02-07 06:28:16 UTC.
+        /// Values with MSB = 1 (intPart >= 0x80000000) correspond to years 1968–2036 (Era 0).
+        /// Values with MSB = 0 (intPart < 0x80000000), which would otherwise represent years
+        /// 1900–1968 before modern NTP existed, are unambiguously inferred to belong to Era 1
+        /// (spanning 2036-02-07 to 2172-03-16 UTC).
+        /// </summary>
         public static DateTime ReadTimestamp(byte[] buffer, int offset)
         {
             ulong intPart = ((ulong)buffer[offset] << 24) |
@@ -251,7 +268,10 @@ namespace WindowsTimeManager.Core
             if (intPart == 0 && fractPart == 0)
                 return DateTime.MinValue;
 
-            double milliseconds = (intPart * 1000.0) + ((fractPart * 1000.0) / 4294967296.0);
+            // Apply standard era-inference heuristic: if intPart < 0x80000000, infer Era 1 (add 2^32 seconds)
+            ulong secondsWithEra = (intPart < 0x80000000UL) ? (intPart + 4294967296UL) : intPart;
+
+            double milliseconds = (secondsWithEra * 1000.0) + ((fractPart * 1000.0) / 4294967296.0);
             try
             {
                 return NtpEpoch.AddMilliseconds(milliseconds);

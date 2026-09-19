@@ -78,6 +78,7 @@ namespace WindowsTimeManager.Core
                     {
                         result.TimedOut = true;
                         try { p.Kill(); } catch { }
+                        try { p.WaitForExit(1000); } catch { }
                         result.ErrorMessage = string.Format("Process timed out after {0} ms: {1} {2}", timeoutMs, fileName, arguments);
                         return result;
                     }

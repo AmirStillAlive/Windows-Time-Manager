@@ -1,15 +1,30 @@
 # WinTime CLI Engine (PowerShell)
 # Lightweight Windows Time & NTP Management CLI
 
+try {
+
 # ---- Self-Elevation (Administrator Check) ----
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
     Write-Host "  [*] Requesting Administrator privileges..." -ForegroundColor Yellow
     $scriptPath = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Definition }
     if ($scriptPath -and (Test-Path $scriptPath)) {
-        Start-Process powershell.exe -ArgumentList "-NoProfile -File `"$scriptPath`"" -Verb RunAs
+        Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`"" -Verb RunAs
+        exit 0
+    } else {
+        Write-Host ""
+        Write-Host "  [X] ERROR: Administrator privileges are required, but the script path could not be resolved." -ForegroundColor Red
+        Write-Host "      This happens when executing via pipeline (irm ... | iex), pasted into console, or in PowerShell ISE." -ForegroundColor Red
+        Write-Host ""
+        Write-Host "      Please run WinTime from a saved file with Administrator privileges:" -ForegroundColor Yellow
+        Write-Host "        1. Double-click WinTime.bat (recommended), OR" -ForegroundColor Cyan
+        Write-Host "        2. Right-click WinTime.ps1 -> 'Run with PowerShell', OR" -ForegroundColor Cyan
+        Write-Host "        3. Open PowerShell as Administrator, then execute: .\WinTime.ps1" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "  Press Enter to exit..." -ForegroundColor Gray
+        try { [void][Console]::ReadLine() } catch { Start-Sleep -Seconds 5 }
+        exit 1
     }
-    exit
 }
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -149,7 +164,7 @@ function Show-Header {
 
     Write-Host ""
     Write-Host "  ================================================================" -ForegroundColor Cyan
-    Write-Host "         WINTIME v0.1.1 (ALPHA) - WINDOWS TIME & NTP MANAGER" -ForegroundColor Yellow
+    Write-Host "         WINTIME v0.1.3 (ALPHA) - WINDOWS TIME & NTP MANAGER" -ForegroundColor Yellow
     Write-Host "  ================================================================" -ForegroundColor Cyan
     Write-Host "   Current Time: " -ForegroundColor Gray -NoNewline
     Write-Host "$now" -ForegroundColor Yellow
@@ -274,19 +289,43 @@ function Get-NtpTimeFromHost($hostName, $timeoutMs = 2500) {
 }
 
 function Get-HttpsTimeFromHost($url, $name) {
+    # Explicit TLS enforcement: TLS 1.2 and TLS 1.3
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+    } catch {
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        } catch {}
+    }
+
     try {
         $req = [System.Net.HttpWebRequest]::Create($url)
         $req.Timeout = 4000
         $req.Method = "HEAD"
-        $req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        $req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; WinTime)"
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         $res = $req.GetResponse()
         $sw.Stop()
         $httpDate = $res.Headers["Date"]
         $res.Close()
         if ($httpDate) {
-            $utc = [datetime]::ParseExact($httpDate, "ddd, dd MMM yyyy HH:mm:ss GMT", [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal)
-            return @{ Success = $true; Host = $name; UtcTime = $utc; LatencyMs = $sw.ElapsedMilliseconds }
+            $formats = @(
+                "ddd, dd MMM yyyy HH:mm:ss 'GMT'",
+                "ddd, dd MMM yyyy HH:mm:ss GMT",
+                "dddd, dd-MMM-yy HH:mm:ss 'GMT'",
+                "dddd, dd-MMM-yy HH:mm:ss GMT",
+                "ddd MMM d HH:mm:ss yyyy",
+                "ddd MMM  d HH:mm:ss yyyy",
+                "ddd MMM dd HH:mm:ss yyyy",
+                "r"
+            )
+            $utc = [datetime]::MinValue
+            $parsed = [datetime]::TryParseExact($httpDate.Trim(), $formats, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal, [ref]$utc)
+            if ($parsed) {
+                return @{ Success = $true; Host = $name; UtcTime = $utc; LatencyMs = $sw.ElapsedMilliseconds }
+            } else {
+                return @{ Success = $false; Host = $name; Error = "Failed to parse HTTP Date format: $httpDate" }
+            }
         }
     } catch [System.Net.WebException] {
         if ($_.Exception.Status -eq [System.Net.WebExceptionStatus]::TrustFailure) {
@@ -934,4 +973,14 @@ while ($true) {
             Start-Sleep -Seconds 1
         }
     }
+}
+
+} catch {
+    Write-Host ""
+    Write-Host "  [X] UNHANDLED STARTUP ERROR:" -ForegroundColor Red
+    Write-Host "      $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  Press Enter to exit..." -ForegroundColor Gray
+    try { [void][Console]::ReadLine() } catch { Start-Sleep -Seconds 5 }
+    exit 1
 }
