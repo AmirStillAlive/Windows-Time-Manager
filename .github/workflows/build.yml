@@ -1,0 +1,49 @@
+name: Build and Release WinTime
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ published ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Compile Native Executable (C#)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Compile WinTime.exe
+        run: |
+          & "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /optimize+ /platform:anycpu /win32manifest:app.manifest /win32icon:app.ico /out:WinTime.exe Program.cs
+
+      - name: Digital Code Signing (Optional via GitHub Secrets)
+        if: env.SIGNING_CERT_BASE64 != ''
+        env:
+          SIGNING_CERT_BASE64: ${{ secrets.CODE_SIGNING_CERT }}
+          SIGNING_PASS: ${{ secrets.CODE_SIGNING_PASS }}
+        run: |
+          [System.IO.File]::WriteAllBytes("cert.pfx", [System.Convert]::FromBase64String($env:SIGNING_CERT_BASE64))
+          & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe" sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f cert.pfx /p $env:SIGNING_PASS WinTime.exe
+          Remove-Item cert.pfx -Force
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinTime-Package
+          path: |
+            WinTime.exe
+            WinTime.ps1
+
+      - name: Upload to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            WinTime.exe
+            WinTime.ps1

@@ -1,0 +1,21 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Build outputs & temporary files
+*.tmp
+*.log
+*.pfx
+*.cer
+
+# Visual Studio & IDEs
+.vs/
+.idea/
+.vscode/
+bin/
+obj/
+
+# Legacy and local drafts
+\#NewReadme/
+C#/
+TimeManager.py
