@@ -12,7 +12,7 @@
 > A lightweight and fast Windows utility for system clock synchronization, NTP peer management, custom time presets, and game-specific time presets such as **Red Dead Redemption 2**.
 
 [![Build](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml/badge.svg)](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml)
-[![License](https://img.shields.io/github/license/AmirStillAlive/Windows-Time-Manager)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-brightgreen.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue)](https://www.microsoft.com/windows)
 [![Language](https://img.shields.io/badge/language-C%23-purple)](#)
 

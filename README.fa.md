@@ -11,7 +11,7 @@
 > یک ابزار سبک و سریع ویندوزی برای همگام‌سازی ساعت سیستم، مدیریت سرورهای NTP، تنظیم دستی زمان و پریست‌های مخصوص بازی‌هایی مانند **Red Dead Redemption 2**.
 
 [![Build](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml/badge.svg)](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml)
-[![License](https://img.shields.io/github/license/AmirStillAlive/Windows-Time-Manager)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-brightgreen.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue)](https://www.microsoft.com/windows)
 [![Language](https://img.shields.io/badge/language-C%23-purple)](#)
 
