@@ -3,6 +3,7 @@ name: Build and Release WinTime
 on:
   push:
     branches: [ main ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
   release:
@@ -13,6 +14,8 @@ jobs:
   build:
     name: Compile Native Executable (C#)
     runs-on: windows-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Source Code
@@ -41,7 +44,7 @@ jobs:
             WinTime.ps1
 
       - name: Upload to GitHub Release
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
