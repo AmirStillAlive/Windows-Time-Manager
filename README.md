@@ -64,17 +64,28 @@ What started as a tiny quick-fix script for that game issue gradually grew: Wind
 
 ---
 
-## 🚀 Installation
+## 🚀 Installation & Launch
 
-Choose any of the installation or launch methods below:
+Choose the method that best fits your workflow:
 
-### Method 1: Standalone Graphical App (Recommended)
-Download the standalone executable **[`WinTime.exe`](https://github.com/AmirStillAlive/Windows-Time-Manager/releases/latest)** directly from the latest [GitHub Release](https://github.com/AmirStillAlive/Windows-Time-Manager/releases).
-* **No installation or PowerShell commands required.** Simply double-click `WinTime.exe` to launch the modern graphical interface.
+### 🖥️ Option 1: Standalone Graphical App (GUI)
+Download **[`WinTime.exe`](https://github.com/AmirStillAlive/Windows-Time-Manager/releases/latest)** directly from the latest [GitHub Release](https://github.com/AmirStillAlive/Windows-Time-Manager/releases) and double-click to run.
+* **No installation or PowerShell commands required.** Simply run the modern graphical interface.
 * Runs without initial UAC elevation (`asInvoker`), requesting elevation only when administrative actions are performed.
 
-### Method 2: Automated Installer (`install.bat`)
-You can download and double-click **[`install.bat`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.bat)**, or run the command below:
+---
+
+### ⚡ Option 2: Run CLI Instantly (PowerShell One-Liner)
+To run the interactive Command-Line Interface directly inside your current PowerShell terminal without manual downloading:
+```powershell
+irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.ps1 -OutFile "$env:TEMP\WinTime.ps1"; powershell -ExecutionPolicy Bypass -File "$env:TEMP\WinTime.ps1"
+```
+> **Note:** This downloads `WinTime.ps1` to `%TEMP%` and executes via `-File`. It avoids `iex` in-memory streaming (no antivirus false positives) and does not require `curl`.
+
+---
+
+### 📦 Option 3: Automated Installer (Installs Both GUI & CLI)
+Installs components into `%LOCALAPPDATA%\WinTime` and creates Desktop and Start Menu shortcuts for **both** the GUI and CLI:
 
 **In PowerShell (Windows 10 / 11):**
 ```powershell
@@ -85,18 +96,13 @@ irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/i
 ```cmd
 powershell -Command "irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.bat -OutFile '%TEMP%\install.bat'" && "%TEMP%\install.bat"
 ```
-> **Note:** The installer works on all Windows systems with zero prerequisites (it does not require `curl` and uses native Windows components). Because it saves files directly to disk instead of streaming code into PowerShell memory (`iex`), it completely avoids Antivirus / AMSI false positives.
+*(Or simply download and double-click [`install.bat`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.bat). To launch directly into the CLI after installation, run `install.bat -cli`.)*
 
-### Method 3: Offline / Manual Script Download (CLI)
-1. Download both [`WinTime.bat`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.bat) and [`WinTime.ps1`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.ps1) (or download packaged assets from the latest [GitHub Release](https://github.com/AmirStillAlive/Windows-Time-Manager/releases)) and place them in the same folder.
+---
+
+### 📁 Option 4: Offline / Manual Script Download
+1. Download both [`WinTime.bat`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.bat) and [`WinTime.ps1`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.ps1) (or download packaged assets from the latest [GitHub Release](https://github.com/AmirStillAlive/Windows-Time-Manager/releases)) into the same folder.
 2. **Double-click `WinTime.bat`**. The batch launcher automatically bypasses restrictive execution policies, clears Mark-of-the-Web metadata, and starts the CLI.
-> **Note:** Web browsers mark downloaded files with Mark-of-the-Web (MOTW). Use `WinTime.bat` to launch or unblock the script before direct PowerShell execution.
-
-### Method 4: Advanced Command-Line Launch
-If running PowerShell directly from the terminal:
-```cmd
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\path\to\WinTime.ps1"
-```
 
 ---
 

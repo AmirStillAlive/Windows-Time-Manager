@@ -49,33 +49,48 @@ if not exist "%INSTALL_DIR%\WinTime.exe" (
     )
 )
 
-:: 5. Create Desktop and Start Menu shortcuts
-echo [*] Creating shortcuts...
+:: 5. Create Desktop and Start Menu shortcuts for BOTH GUI and CLI
+echo [*] Creating Desktop and Start Menu shortcuts...
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ws = New-Object -ComObject WScript.Shell;" ^
-  "$isExe = Test-Path '%INSTALL_DIR%\WinTime.exe';" ^
-  "$target = if ($isExe) { '%INSTALL_DIR%\WinTime.exe' } else { '%INSTALL_DIR%\WinTime.bat' };" ^
-  "$dShortcut = $ws.CreateShortcut([Environment]::GetFolderPath('Desktop') + '\WinTime.lnk');" ^
-  "$dShortcut.TargetPath = $target;" ^
-  "$dShortcut.WorkingDirectory = '%INSTALL_DIR%';" ^
-  "if (Test-Path '%INSTALL_DIR%\app.ico') { $dShortcut.IconLocation = '%INSTALL_DIR%\app.ico, 0' };" ^
-  "$dShortcut.Description = 'WinTime - Windows Time & NTP Manager';" ^
-  "$dShortcut.Save();" ^
+  "$dPath = [Environment]::GetFolderPath('Desktop');" ^
   "$smDir = [Environment]::GetFolderPath('Programs') + '\WinTime';" ^
   "if (-not (Test-Path $smDir)) { New-Item -ItemType Directory -Path $smDir -Force | Out-Null };" ^
-  "$sShortcut = $ws.CreateShortcut($smDir + '\WinTime.lnk');" ^
-  "$sShortcut.TargetPath = $target;" ^
-  "$sShortcut.WorkingDirectory = '%INSTALL_DIR%';" ^
-  "if (Test-Path '%INSTALL_DIR%\app.ico') { $sShortcut.IconLocation = '%INSTALL_DIR%\app.ico, 0' };" ^
-  "$sShortcut.Description = 'WinTime - Windows Time & NTP Manager';" ^
-  "$sShortcut.Save();"
+  "if (Test-Path '%INSTALL_DIR%\WinTime.exe') {" ^
+  "  $gDesk = $ws.CreateShortcut($dPath + '\WinTime (GUI).lnk');" ^
+  "  $gDesk.TargetPath = '%INSTALL_DIR%\WinTime.exe';" ^
+  "  $gDesk.WorkingDirectory = '%INSTALL_DIR%';" ^
+  "  if (Test-Path '%INSTALL_DIR%\app.ico') { $gDesk.IconLocation = '%INSTALL_DIR%\app.ico, 0' };" ^
+  "  $gDesk.Description = 'WinTime - Graphical Time Manager';" ^
+  "  $gDesk.Save();" ^
+  "  $gMenu = $ws.CreateShortcut($smDir + '\WinTime (GUI).lnk');" ^
+  "  $gMenu.TargetPath = '%INSTALL_DIR%\WinTime.exe';" ^
+  "  $gMenu.WorkingDirectory = '%INSTALL_DIR%';" ^
+  "  if (Test-Path '%INSTALL_DIR%\app.ico') { $gMenu.IconLocation = '%INSTALL_DIR%\app.ico, 0' };" ^
+  "  $gMenu.Description = 'WinTime - Graphical Time Manager';" ^
+  "  $gMenu.Save();" ^
+  "};" ^
+  "if (Test-Path '%INSTALL_DIR%\WinTime.bat') {" ^
+  "  $cDesk = $ws.CreateShortcut($dPath + '\WinTime (CLI).lnk');" ^
+  "  $cDesk.TargetPath = '%INSTALL_DIR%\WinTime.bat';" ^
+  "  $cDesk.WorkingDirectory = '%INSTALL_DIR%';" ^
+  "  if (Test-Path '%INSTALL_DIR%\app.ico') { $cDesk.IconLocation = '%INSTALL_DIR%\app.ico, 0' };" ^
+  "  $cDesk.Description = 'WinTime - Command Line Interface';" ^
+  "  $cDesk.Save();" ^
+  "  $cMenu = $ws.CreateShortcut($smDir + '\WinTime (CLI).lnk');" ^
+  "  $cMenu.TargetPath = '%INSTALL_DIR%\WinTime.bat';" ^
+  "  $cMenu.WorkingDirectory = '%INSTALL_DIR%';" ^
+  "  if (Test-Path '%INSTALL_DIR%\app.ico') { $cMenu.IconLocation = '%INSTALL_DIR%\app.ico, 0' };" ^
+  "  $cMenu.Description = 'WinTime - Command Line Interface';" ^
+  "  $cMenu.Save();" ^
+  "}"
 
 :: 6. Create uninstaller
 set "UNINSTALL_BAT=%INSTALL_DIR%\uninstall.bat"
 (
 echo @echo off
 echo echo Uninstalling WinTime...
-echo del /f /q "%%USERPROFILE%%\Desktop\WinTime.lnk" 2^>nul
+echo del /f /q "%%USERPROFILE%%\Desktop\WinTime*.lnk" 2^>nul
 echo rd /s /q "%%APPDATA%%\Microsoft\Windows\Start Menu\Programs\WinTime" 2^>nul
 echo timeout /t 1 /nobreak ^>nul
 echo rd /s /q "%INSTALL_DIR%" 2^>nul
@@ -91,15 +106,23 @@ echo.
 echo ================================================================
 echo  [OK] Successfully installed WinTime to:
 echo       %INSTALL_DIR%
-echo  [OK] Desktop and Start Menu shortcuts created!
+echo  [OK] Shortcuts created for GUI and CLI!
 echo ================================================================
 echo.
-echo [*] Launching WinTime...
+
+if /i "%~1"=="-cli" goto LaunchCli
+if /i "%~1"=="--cli" goto LaunchCli
+if /i "%~1"=="/cli" goto LaunchCli
+
 if exist "%INSTALL_DIR%\WinTime.exe" (
+    echo [*] Launching WinTime (GUI)...
     start "" "%INSTALL_DIR%\WinTime.exe"
-) else (
-    start "" "%INSTALL_DIR%\WinTime.bat"
+    exit /b 0
 )
+
+:LaunchCli
+echo [*] Launching WinTime (CLI)...
+call "%INSTALL_DIR%\WinTime.bat"
 exit /b 0
 
 :: Universal download subroutine: uses curl if available, falls back to native WebClient

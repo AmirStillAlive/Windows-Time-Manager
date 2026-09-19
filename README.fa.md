@@ -64,17 +64,28 @@
 
 ---
 
-## 🚀 نصب و راه‌اندازی
+## 🚀 روش‌های اجرا و نصب
 
-یکی از روش‌های زیر را متناسب با نیاز خود برای نصب یا اجرای برنامه انتخاب کنید:
+روش مورد نظر خود را متناسب با نحوه استفاده انتخاب کنید:
 
-### روش اول: دانلود مستقیم نسخه گرافیکی (پیشنهادی)
-فایل اجرایی مستقل **[`WinTime.exe`](https://github.com/AmirStillAlive/Windows-Time-Manager/releases/latest)** را مستقیماً از آخرین انتشار در [GitHub Releases](https://github.com/AmirStillAlive/Windows-Time-Manager/releases) دریافت کنید.
-* **بدون نیاز به نصب یا دستورات پاورشل؛** فقط کافیست روی `WinTime.exe` دابل‌کلیک کنید تا محیط گرافیکی و مدرن برنامه باز شود.
+### 🖥️ روش اول: دانلود مستقیم نسخه گرافیکی (GUI)
+فایل اجرایی مستقل **[`WinTime.exe`](https://github.com/AmirStillAlive/Windows-Time-Manager/releases/latest)** را مستقیماً از آخرین انتشار در [GitHub Releases](https://github.com/AmirStillAlive/Windows-Time-Manager/releases) دریافت کرده و با دابل‌کلیک اجرا نمایید.
+* **بدون نیاز به نصب یا اجرای دستورات پاورشل؛** فقط با دابل‌کلیک محیط گرافیکی برنامه باز می‌شود.
 * برنامه با دسترسی عادی کاربر (`asInvoker`) باز می‌شود و تنها هنگام اعمال تنظیمات سیستمی، تأییدیه ادمین (UAC) درخواست می‌شود.
 
-### روش دوم: نصب خودکار با اسکریپت نصاب (`install.bat`)
-می‌توانید فایل **[`install.bat`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.bat)** را دانلود کرده و با دابل‌کلیک اجرا کنید، یا دستور زیر را در ترمینال وارد نمایید:
+---
+
+### ⚡ روش دوم: اجرای فوری نسخه متنی در پاورشل (CLI One-Liner)
+اگر می‌خواهید مستقیماً منوی تعاملی خط فرمان (CLI) را در همان محیط PowerShell خود و بدون دانلود دستی فایل‌ها اجرا کنید:
+```powershell
+irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.ps1 -OutFile "$env:TEMP\WinTime.ps1"; powershell -ExecutionPolicy Bypass -File "$env:TEMP\WinTime.ps1"
+```
+> **نکته:** این دستور اسکریپت را دریافت کرده و با فلگ `-File` اجرا می‌کند. به دلیل عدم اجرای کدهای تحت وب در رم (`iex`) و عدم وابستگی به `curl`، هیچ اخطار کاذبی از طرف آنتی‌ویروس صادر نمی‌شود و بلافاصله منوی CLI را در ترمینال باز می‌کند.
+
+---
+
+### 📦 روش سوم: نصب خودکار روی سیستم (شامل هر دو نسخه GUI و CLI)
+برنامه را در مسیر `%LOCALAPPDATA%\WinTime` نصب کرده و میانبرهای دسکتاپ و استارت منو را برای **هر دو نسخه گرافیکی و خط فرمان** ایجاد می‌کند:
 
 **در محیط PowerShell (ویندوز ۱۰ و ۱۱):**
 ```powershell
@@ -85,18 +96,13 @@ irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/i
 ```cmd
 powershell -Command "irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.bat -OutFile '%TEMP%\install.bat'" && "%TEMP%\install.bat"
 ```
-> **نکته:** این اسکریپت نصاب کاملاً مستقل بوده و حتی روی سیستم‌های ویندوز قدیمی بدون ابزار `curl` با قابلیت دانلود بومی کار می‌کند. همچنین به دلیل ذخیره‌سازی فایل‌ها روی دیسک و عدم اجرای مستقیم در رم (`iex`)، هیچ‌گونه اخطار کاذب از طرف آنتی‌ویروس یا Windows Defender ایجاد نمی‌شود.
+*(همچنین می‌توانید فایل [`install.bat`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/install.bat) را مستقیماً دانلود و دابل‌کلیک کنید. برای اجرای مستقیم نسخه متنی بعد از نصب، دستور `install.bat -cli` را اجرا نمایید).*
 
-### روش سوم: دانلود دستی اسکریپت و اجرای آفلاین (CLI)
+---
+
+### 📁 روش چهارم: دانلود دستی اسکریپت‌ها و اجرای آفلاین
 ۱. هر دو فایل [`WinTime.bat`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.bat) و [`WinTime.ps1`](https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.ps1) را دانلود کرده (یا از آخرین انتشار در [GitHub Releases](https://github.com/AmirStillAlive/Windows-Time-Manager/releases) دریافت کنید) و کنار یکدیگر در یک پوشه قرار دهید.
-۲. روی فایل **`WinTime.bat` دابل‌کلیک کنید**. لانچر بچ به طور خودکار محدودیت‌های اجرای پاورشل و برچسب‌های اینترنتی را دور زده و برنامه را اجرا می‌کند.
-> **نکته:** مرورگرها فایل‌های دانلود شده را با برچسب امنیتی Mark-of-the-Web نشانه‌گذاری می‌کنند. از `WinTime.bat` استفاده کنید یا فایل را پیش از اجرای مستقیم رفع انسداد (Unblock) کنید.
-
-### روش چهارم: اجرای مستقیم از خط فرمان (کاربران حرفه‌ای)
-در صورتی که می‌خواهید مستقیماً از طریق کنسول پاورشل را اجرا کنید:
-```cmd
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\path\to\WinTime.ps1"
-```
+۲. روی فایل **`WinTime.bat` دابل‌کلیک کنید**. لانچر بچ به طور خودکار محدودیت‌های اجرای پاورشل و برچسب‌های اینترنتی را دور زده و محیط متنی برنامه (CLI) را اجرا می‌کند.
 
 ---
 
