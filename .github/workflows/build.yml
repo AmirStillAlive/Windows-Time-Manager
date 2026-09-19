@@ -33,7 +33,7 @@ jobs:
             $errs = $null
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $s).Path, [ref]$null, [ref]$errs) | Out-Null
             if ($errs -and $errs.Count -gt 0) {
-              throw "Syntax error in $s: $($errs[0].Message)"
+              throw "Syntax error in $($s): $($errs[0].Message)"
             }
             Write-Host "  -> $s syntax clean"
           }

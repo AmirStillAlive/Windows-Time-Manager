@@ -118,7 +118,7 @@ $shortcut.Save()
 
 Write-Host ""
 Write-Host "  [OK] Successfully installed to: $installDir" -ForegroundColor Green
-Write-Host "  [✓] Desktop shortcut created: $shortcutPath" -ForegroundColor Green
+Write-Host "  [OK] Desktop shortcut created: $shortcutPath" -ForegroundColor Green
 Write-Host ""
 Write-Host "  [*] Launching WinTime..." -ForegroundColor Cyan
 
