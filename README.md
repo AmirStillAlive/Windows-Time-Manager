@@ -68,9 +68,9 @@ What started as a tiny quick-fix script for that game issue gradually grew: Wind
 
 Choose the method that best fits your workflow:
 
-### 🖥️ Option 1: Standalone Graphical App (GUI)
+### 🖥️ Option 1: Standalone Graphical App (GUI - Recommended)
 Download **[`WinTime.exe`](https://github.com/AmirStillAlive/Windows-Time-Manager/releases/latest)** directly from the latest [GitHub Release](https://github.com/AmirStillAlive/Windows-Time-Manager/releases) and double-click to run.
-* **No installation or PowerShell commands required.** Simply run the modern graphical interface.
+* **No installation or PowerShell commands required (Simplest for most users).** Simply double-click `WinTime.exe` to launch the modern graphical interface.
 * Runs without initial UAC elevation (`asInvoker`), requesting elevation only when administrative actions are performed.
 
 ---
@@ -80,7 +80,11 @@ To run the interactive Command-Line Interface directly inside your current Power
 ```powershell
 irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/WinTime.ps1 -OutFile "$env:TEMP\WinTime.ps1"; powershell -ExecutionPolicy Bypass -File "$env:TEMP\WinTime.ps1"
 ```
-> **Note:** This downloads `WinTime.ps1` to `%TEMP%` and executes via `-File`. It avoids `iex` in-memory streaming (no antivirus false positives) and does not require `curl`.
+
+#### 🔍 What exactly does this command do? (Full Transparency):
+1. **`irm .../WinTime.ps1 -OutFile "$env:TEMP\WinTime.ps1"`**: Uses native PowerShell (`Invoke-RestMethod`) to download the official `WinTime.ps1` script from GitHub into your Windows temporary folder (`%TEMP%\WinTime.ps1`). No external tools like `curl` are required.
+2. **`;`**: Standard PowerShell command separator to run the second step right after the download finishes.
+3. **`powershell -ExecutionPolicy Bypass -File "$env:TEMP\WinTime.ps1"`**: Launches the script directly from disk. The `-ExecutionPolicy Bypass` flag ensures it runs even if your system policy is set to `Restricted` or `RemoteSigned`. Because the file is saved to disk before running (rather than piped directly into memory via `iex`), it completely avoids heuristic antivirus / AMSI false alarms and immediately displays the interactive CLI menu.
 
 ---
 
