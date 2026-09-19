@@ -2,10 +2,10 @@ name: Build and Release WinTime
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, dev ]
     tags: [ 'v*' ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, dev ]
   release:
     types: [ published ]
   workflow_dispatch:
