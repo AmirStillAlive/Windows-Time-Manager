@@ -10,10 +10,10 @@
 
 > A lightweight Windows utility for system clock synchronization, NTP peer management, and custom time adjustments.
 
-[![Build](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml/badge.svg?branch=dev)](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml)
+[![Build](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-brightgreen.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue)](https://www.microsoft.com/windows)
-[![Version](https://img.shields.io/badge/version-v0.1.3--alpha-orange)](#)
+[![Version](https://img.shields.io/badge/version-v0.1.3-blue)](#)
 
 ---
 
@@ -84,7 +84,7 @@ irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/W
 #### 🔍 What exactly does this command do? (Full Transparency):
 1. **`irm .../WinTime.ps1 -OutFile "$env:TEMP\WinTime.ps1"`**: Uses native PowerShell (`Invoke-RestMethod`) to download the official `WinTime.ps1` script from GitHub into your Windows temporary folder (`%TEMP%\WinTime.ps1`). No external tools like `curl` are required.
 2. **`;`**: Standard PowerShell command separator to run the second step right after the download finishes.
-3. **`powershell -ExecutionPolicy Bypass -File "$env:TEMP\WinTime.ps1"`**: Launches the script directly from disk. The `-ExecutionPolicy Bypass` flag ensures it runs even if your system policy is set to `Restricted` or `RemoteSigned`. Because the file is saved to disk before running (rather than piped directly into memory via `iex`), it completely avoids heuristic antivirus / AMSI false alarms and immediately displays the interactive CLI menu.
+3. **`powershell -ExecutionPolicy Bypass -File "$env:TEMP\WinTime.ps1"`**: Launches the script directly from disk. The `-ExecutionPolicy Bypass` flag ensures it runs even if your system policy is set to `Restricted` or `RemoteSigned`. Because the file is saved to disk before running (rather than piped directly into memory via `iex`), it helps avoid common heuristic antivirus and AMSI false positives. For high-security environments, verify the downloaded file against the SHA-256 checksum published for the corresponding release before execution.
 
 ---
 

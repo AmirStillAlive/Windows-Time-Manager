@@ -10,10 +10,10 @@
 
 > ابزاری سبک و ساده برای همگام‌سازی ساعت ویندوز، مدیریت سرورهای NTP و تنظیم آسان زمان سیستم.
 
-[![Build](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml/badge.svg?branch=dev)](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml)
+[![Build](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/AmirStillAlive/Windows-Time-Manager/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-brightgreen.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue)](https://www.microsoft.com/windows)
-[![Version](https://img.shields.io/badge/version-v0.1.3--alpha-orange)](#)
+[![Version](https://img.shields.io/badge/version-v0.1.3-blue)](#)
 
 ---
 
@@ -84,7 +84,7 @@ irm https://raw.githubusercontent.com/AmirStillAlive/Windows-Time-Manager/main/W
 #### 🔍 این دستور دقیقاً در سیستم شما چه کاری انجام می‌دهد؟ (شفافیت کامل):
 1. **`irm .../WinTime.ps1 -OutFile "$env:TEMP\WinTime.ps1"`**: با استفاده از دستور بومی پاورشل (`Invoke-RestMethod`)، فایل رسمی `WinTime.ps1` را از مخزن گیت‌هاب دانلود کرده و در پوشه فایل‌های موقت ویندوز (`%TEMP%\WinTime.ps1`) ذخیره می‌کند (بدون وابستگی به `curl` یا ابزارهای جانبی).
 2. **`;`**: جداکننده استاندارد دستورات در پاورشل جهت اجرای دستور دوم بلافاصله پس از اتمام دانلود فایل.
-3. **`powershell -ExecutionPolicy Bypass -File "$env:TEMP\WinTime.ps1"`**: فایل دانلود شده را مستقیماً از روی دیسک اجرا می‌کند. سوییچ `-ExecutionPolicy Bypass` باعث می‌شود اسکریپت حتی در صورت فعال بودن محدودیت‌های امنیتی سیستم بدون خطا اجرا شود. همچنین به دلیل ذخیره‌سازی روی دیسک و عدم اجرای مستقیم در رم با `iex`، هیچ‌گونه اخطار کاذب از طرف آنتی‌ویروس یا ویندوز دیفندر دریافت نخواهید کرد و منوی متنی برنامه فوراً باز می‌شود.
+3. **`powershell -ExecutionPolicy Bypass -File "$env:TEMP\WinTime.ps1"`**: فایل دانلود شده را مستقیماً از روی دیسک اجرا می‌کند. سوییچ `-ExecutionPolicy Bypass` باعث می‌شود اسکریپت حتی در صورت فعال بودن محدودیت‌های امنیتی سیستم اجرا شود. ذخیره‌سازی روی دیسک و عدم اجرای مستقیم در رم با `iex`، از هشدارهای رایج آنتی‌ویروس و مکانیزم‌های AMSI جلوگیری می‌کند. برای اطمینان و امنیت بیشتر، می‌توانید صحت فایل دانلود شده را با چک‌سام‌های SHA-256 منتشر شده برای نسخه متناظر در بخش Releases مطابقت دهید.
 
 ---
 
